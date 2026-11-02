@@ -4,6 +4,8 @@ A working version written in **Python + PySide6 (Qt 6)**. It supports the three 
 
 ## Installing and running
 
+The commands below run from the `prototype/` folder (`cd prototype` first).
+
 Windows:
 ```
 pip install -r requirements.txt
@@ -72,4 +74,4 @@ Set `DHDS_SAMPLES` to point at the folder holding `fsm.sm`, `struct.bd`, `gc_con
 - When the language of a view is changed, the old `.v`/`.sv` file is not deleted automatically (only a warning in the Log).
 - Git, ModuleWare.
 
-Screenshots are in the `screenshots/` folder.
+Screenshots are in the `prototype/screenshots/` folder.
