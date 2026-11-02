@@ -1,0 +1,7 @@
+__pycache__/
+*.pyc
+*.lck
+.hdlsidedata/
+.xrf/
+*.cache.dat
+.vscode/

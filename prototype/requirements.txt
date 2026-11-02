@@ -1,0 +1,2 @@
+PySide6>=6.5
+pyslang>=6.0  # optional: SystemVerilog compile check in tests
