@@ -275,6 +275,61 @@ def library_icon(protected: bool = False, shared: bool = False, root: bool = Fal
     return ic
 
 
+def _spark(p: QPainter, x: float = 3.5, y: float = 3.5):
+    """Yellow spark: something new is created."""
+    p.setPen(QPen(QColor(200, 150, 0), 1.2))
+    p.drawLine(QPointF(x - 3, y), QPointF(x + 3, y)); p.drawLine(QPointF(x, y - 3), QPointF(x, y + 3))
+    p.setBrush(YELLOW); p.setPen(QPen(QColor(200, 150, 0), 0.6)); p.drawEllipse(QPointF(x, y), 1.8, 1.8)
+
+
+def project_icon(name: str) -> QIcon:
+    """24x24 icons of the left Project page, drawn in a 16x16 space."""
+    key = 'project:' + name
+    if key in _CACHE:
+        return _CACHE[key]
+    pm = QPixmap(24, 24)
+    pm.fill(Qt.transparent)
+    p = QPainter(pm)
+    p.setRenderHint(QPainter.Antialiasing)
+    p.scale(1.5, 1.5)
+    if name in ('new_project', 'new_library', 'explore_library', 'close_project'):
+        p.save(); p.translate(2, 2); p.scale(0.85, 0.85); _draw_small(p, 'library'); p.restore()
+    if name == 'new_project':
+        p.setBrush(Qt.NoBrush); p.setPen(QPen(NAVY, 1)); p.drawRect(QRectF(1.5, 1.5, 14, 13.5))
+        _spark(p)
+    elif name == 'new_library':
+        _spark(p)
+    elif name == 'open_project':
+        _draw_small(p, 'folder')
+        p.setPen(QPen(DARK_GREEN, 1.8, Qt.SolidLine, Qt.RoundCap, Qt.RoundJoin))
+        p.drawPolyline(QPolygonF([QPointF(8, 11), QPointF(8, 2)]))
+        p.drawPolyline(QPolygonF([QPointF(5, 5), QPointF(8, 2), QPointF(11, 5)]))
+    elif name == 'edit_mappings':             # a library mapped to a folder, and a pencil
+        _draw_small(p, 'folder')
+        p.setPen(QPen(QColor(120, 70, 0), 1)); p.setBrush(YELLOW)
+        p.drawPolygon(QPolygonF([QPointF(9, 13), QPointF(15, 7), QPointF(16, 8), QPointF(10, 14), QPointF(8.5, 14.5)]))
+    elif name == 'set_default':
+        _arrow(p, 4)
+    elif name == 'explore_library':           # library and a magnifying glass
+        p.setPen(QPen(QColor(60, 60, 60), 2)); p.drawLine(QPointF(12, 12), QPointF(15.5, 15.5))
+        p.setBrush(QColor(220, 240, 255, 200)); p.setPen(QPen(QColor(60, 60, 60), 1.2))
+        p.drawEllipse(QPointF(10, 10), 3.5, 3.5)
+    elif name == 'new_add':
+        _draw_small(p, 'file_hdl'); _spark(p)
+    elif name == 'version':                   # stacked revisions of a file
+        for k in (2, 1, 0):
+            _page(p, QRectF(2 + 2 * k, 1 + 1.5 * k, 9, 11), QColor(255, 255, 255) if k == 0 else QColor(215, 215, 215))
+        p.setBrush(BLUE); p.setPen(Qt.NoPen); p.drawEllipse(QPointF(12.5, 12.5), 3, 3)
+        p.setPen(QPen(Qt.white, 1)); p.drawLine(QPointF(12.5, 10.8), QPointF(12.5, 12.5))
+        p.drawLine(QPointF(12.5, 12.5), QPointF(14, 12.5))
+    elif name == 'close_project':
+        p.setPen(QPen(RED, 2.2, Qt.SolidLine, Qt.RoundCap)); p.drawLine(9, 9, 15, 15); p.drawLine(15, 9, 9, 15)
+    p.end()
+    ic = QIcon(pm)
+    _CACHE[key] = ic
+    return ic
+
+
 def unit_icon(du) -> QIcon:
     """Icon for a design unit by what it is."""
     if du is None:

@@ -5,3 +5,8 @@ __pycache__/
 .xrf/
 *.cache.dat
 .vscode/
+prototype/tests/gui/out/
+prototype/tests/hds_compare/reference/
+prototype/tests/hds_compare/results/
+prototype/tests/hds_gui/out/
+prototype/tests/hds_compare/out/

@@ -40,9 +40,12 @@ def native_path(lib: Library, unit: str, view_name: str, kind: str) -> str:
 GENERATED_EXT = {'verilog': 'v', 'systemverilog': 'sv'}
 
 
-def target_path(lib: Library, unit: str, language: str, rule: str = '%(unit).%(ext)', lower: bool = True) -> str:
+def target_path(lib: Library, unit: str, language: str, rule: str = '%(unit).%(ext)', lower: bool = True,
+                view: str = '') -> str:
+    """Generated HDL file of a unit. The rule may use %(unit), %(view) and %(ext); HDS names a
+    generated file %(unit)_%(view).%(ext), e.g. uart_tx_fsm.v."""
     ext = GENERATED_EXT['systemverilog' if language == 'systemverilog' else 'verilog']
-    name = rule.replace('%(unit)', unit).replace('%(ext)', ext)
+    name = rule.replace('%(unit)', unit).replace('%(view)', view).replace('%(ext)', ext)
     if lower:
         name = name.lower()
     return os.path.join(lib.main_hdl_dir, name)
@@ -107,7 +110,7 @@ def generate_unit(lib: Library, unit: DesignUnit, view: View | None = None, mode
     except Exception as e:
         res.message = f'generation failed: {e}'
         return res
-    path = target_path(lib, unit.name, model.language, rule, lower)
+    path = target_path(lib, unit.name, model.language, rule, lower, getattr(model, 'view', ''))
     res.path = path
     udir = lib.unit_dir(unit.name)
     rec = _read_record(udir)
@@ -133,7 +136,7 @@ def generate_unit(lib: Library, unit: DesignUnit, view: View | None = None, mode
     _write_record(udir, rec)
     res.status = 'written'
     other = target_path(lib, unit.name, 'verilog' if model.language == 'systemverilog' else 'systemverilog',
-                        rule, lower)
+                        rule, lower, getattr(model, 'view', ''))
     if os.path.exists(other):
         res.warnings.append(f'{os.path.basename(other)} (other language) still exists in the HDL folder')
     return res

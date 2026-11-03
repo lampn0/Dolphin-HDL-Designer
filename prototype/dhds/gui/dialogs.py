@@ -107,7 +107,7 @@ class NewLibraryDialog(_Base):
 
 class NewUnitDialog(_Base):
     KINDS = [('fsm', 'State Machine (graphical)'), ('sv', 'SystemVerilog module (text)'),
-             ('v', 'Verilog module (text)'), ('bd', 'Block Diagram (not editable yet)')]
+             ('v', 'Verilog module (text)'), ('bd', 'Block Diagram (graphical)')]
 
     def __init__(self, libraries: list[str], current: str, prefs: Prefs, parent=None):
         super().__init__('New Design Content', parent)
@@ -117,9 +117,14 @@ class NewUnitDialog(_Base):
         self.kind = QComboBox()
         for k, label in self.KINDS:
             self.kind.addItem(label, k)
-        self.kind.model().item(3).setEnabled(False)
         self.unit = QLineEdit()
         self.view = QLineEdit('fsm')
+        # language of a graphical view, as the HDS wizard asks it (Verilog 2005 / SystemVerilog)
+        self.language = QComboBox()
+        for lang in LANGUAGES:
+            self.language.addItem(LANG_LABEL[lang], lang)
+        self.language.setCurrentIndex(max(0, LANGUAGES.index(prefs.default_language)
+                                          if prefs.default_language in LANGUAGES else 0))
         self.kind.currentIndexChanged.connect(self._kind_changed)
         self.ports = QPlainTextEdit()
         self.ports.setPlaceholderText('One port per line, e.g.\ninput clk\ninput rst_n\ninput [7:0] data_in\n'
@@ -130,6 +135,7 @@ class NewUnitDialog(_Base):
         self.form.addRow('Content type', self.kind)
         self.form.addRow('Design unit name', self.unit)
         self.form.addRow('View name', self.view)
+        self.form.addRow('Language', self.language)
         self.form.addRow('Ports', self.ports)
         self.form.addRow(QLabel('<small>For a state machine, the first input named like a clock gets '
                                 'Category = clock and one named like a reset gets Category = reset.</small>'))

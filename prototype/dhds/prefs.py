@@ -45,6 +45,15 @@ class Prefs:
     source_rule: str = '%(module_name).%(ext)'
     source_case: str = 'Preserve case'
     search_path: str = ''
+    verilog_style: dict = field(default_factory=dict)    # Style tab; tab_width is used by generation
+    view_headers: dict = field(default_factory=dict)     # Headers tab: view type -> template
+    gen_properties: bool = False                 # Headers: generation properties after the header
+    gen_signal_status: bool = False              # Headers: signal status of state machines
+    pre_module: str = ''                         # Default Directives, copied into new views
+    post_module: str = ''
+    end_module: str = ''
+    package_refs: str = ''                       # Default Packages, copied into new SystemVerilog views
+    pragma: dict = field(default_factory=dict)   # Style > Pragma Setup: keyword, directive, sm_state_vector
     # File > Page Setup...
     page_setup: dict = field(default_factory=dict)
 
@@ -67,6 +76,10 @@ class Prefs:
         os.makedirs(os.path.dirname(self.path()), exist_ok=True)
         with open(self.path(), 'w', encoding='utf-8') as f:
             json.dump(asdict(self), f, indent=2)
+
+    def header_for(self, view_type: str) -> str:
+        """Header template of a view type of Verilog Options > Headers (Block Diagram, State Diagram...)."""
+        return self.view_headers.get(view_type) or self.header_template
 
     def add_recent(self, path: str) -> None:
         path = os.path.abspath(path)

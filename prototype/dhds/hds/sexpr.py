@@ -28,6 +28,12 @@ _TOKEN_RE = re.compile(
 )
 
 
+class Atom(str):
+    """An unquoted value of the file (e.g. `uid 2742,0`, `ps CenterOffsetStrategy`): a str, so
+    readers use it as any text, kept apart from quoted strings so that write() puts it back
+    exactly as it was."""
+
+
 @dataclass
 class Ref:
     """Reference `&N` to a labelled object."""
@@ -60,6 +66,7 @@ class Document:
     """A parsed file: top-level key/value pairs plus the label table."""
     fields: list[tuple[str, Any]]
     labels: dict[int, Node]
+    newline: str = '\n'          # line ending of the file read ('\r\n' for files saved on Windows)
 
     def get(self, key: str, default: Any = None) -> Any:
         for k, v in self.fields:
@@ -93,15 +100,20 @@ def _unescape(s: str) -> str:
 
 
 def _convert_atom(text: str) -> Any:
-    if re.fullmatch(r'-?\d+', text):
+    if re.fullmatch(r'-?\d+', text) and str(int(text)) == text:
         return int(text)
-    return text
+    return Atom(text)
+
+
+BLANK = Atom('')     # an empty line inside a list (HDS writes some); written back as one
 
 
 class _Parser:
     def __init__(self, text: str):
-        self.tokens = [(m.lastgroup, m.group()) for m in _TOKEN_RE.finditer(text)
-                       if m.lastgroup != 'ws']
+        # whitespace is dropped, except an empty line, which is kept as a 'blank' token
+        self.tokens = [('blank', '') if m.lastgroup == 'ws' else (m.lastgroup, m.group())
+                       for m in _TOKEN_RE.finditer(text)
+                       if m.lastgroup != 'ws' or re.search(r'\n[ \t]*\n', m.group())]
         self.pos = 0
         self.labels: dict[int, Node] = {}
 
@@ -115,7 +127,12 @@ class _Parser:
         self.pos += 1
         return tok
 
+    def _skip_blanks(self):
+        while self.peek() and self.peek()[0] == 'blank':
+            self.pos += 1
+
     def parse_value(self) -> Any:
+        self._skip_blanks()
         kind, text = self.next()
         if kind == 'str':
             return _unescape(text)
@@ -135,6 +152,10 @@ class _Parser:
         if kind == 'lbrack':
             items = []
             while self.peek() and self.peek()[0] != 'rbrack':
+                if self.peek()[0] == 'blank':
+                    self.next()
+                    items.append(BLANK)
+                    continue
                 items.append(self.parse_value())
             self.next()
             return items
@@ -146,6 +167,7 @@ class _Parser:
             raise ParseError(f"expected type name, got {text!r}")
         node = Node(text)
         while True:
+            self._skip_blanks()
             tok = self.peek()
             if tok is None:
                 raise ParseError(f"unterminated ({node.type}")
@@ -159,7 +181,10 @@ class _Parser:
 
     def parse_document(self) -> Document:
         fields = []
-        while self.peek():
+        while True:
+            self._skip_blanks()
+            if not self.peek():
+                break
             kind, key = self.next()
             if kind != 'atom':
                 raise ParseError(f"expected top-level key, got {key!r}")
@@ -168,9 +193,63 @@ class _Parser:
 
 
 def parse(text: str) -> Document:
-    return _Parser(text).parse_document()
+    newline = '\r\n' if '\r\n' in text else '\n'
+    doc = _Parser(text.replace('\r\n', '\n')).parse_document()
+    doc.newline = newline
+    return doc
 
 
 def parse_file(path: str) -> Document:
-    with open(path, encoding='utf-8', errors='replace') as f:
+    with open(path, encoding='utf-8', errors='replace', newline='') as f:     # keep the line endings
         return parse(f.read())
+
+
+# -- writing --------------------------------------------------------------------------------
+def _fmt(v: Any) -> str:
+    """A scalar as the file writes it: ints and Atoms bare, references &N, other text quoted
+    (backslash and double quote escaped)."""
+    if isinstance(v, bool):
+        return str(int(v))
+    if isinstance(v, int):
+        return str(v)
+    if isinstance(v, Atom):
+        return str(v)
+    if isinstance(v, Ref):
+        return f'&{v.label}'
+    if isinstance(v, str):
+        return '"' + v.replace('\\', '\\\\').replace('"', '\\"') + '"'
+    raise TypeError(f'cannot write {v!r}')
+
+
+def _write_value(out: list[str], head: str, v: Any) -> None:
+    """Write one value after `head` ("key " for a field, "" for a list item), in the layout
+    of HDS files: an object opens on the head line and closes on its own line, a list too,
+    one item / field per line."""
+    if isinstance(v, Node):
+        lab = f'*{v.label} ' if v.label is not None else ''
+        out.append(f'{head}{lab}({v.type}')
+        for k, x in v.fields:
+            _write_value(out, f'{k} ', x)
+        out.append(')')
+    elif isinstance(v, list):
+        out.append(f'{head}[')
+        for x in v:
+            _write_value(out, '', x)
+        out.append(']')
+    else:
+        out.append(f'{head}{_fmt(v)}')
+
+
+def write(doc: Document) -> str:
+    """The text of a document, in the HDS file layout (a file read and written back unchanged
+    is byte for byte the same)."""
+    out: list[str] = []
+    for k, v in doc.fields:
+        _write_value(out, f'{k} ', v)
+    text = '\n'.join(out) + '\n'
+    return text.replace('\n', doc.newline) if doc.newline != '\n' else text
+
+
+def write_file(doc: Document, path: str) -> None:
+    with open(path, 'w', encoding='utf-8', newline='') as f:      # write() chose the line endings
+        f.write(write(doc))
