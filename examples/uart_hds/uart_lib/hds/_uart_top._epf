@@ -1,0 +1,2 @@
+DEFAULT_ARCHITECTURE atom uart_top
+DEFAULT_FILE atom uart_top/struct.bd

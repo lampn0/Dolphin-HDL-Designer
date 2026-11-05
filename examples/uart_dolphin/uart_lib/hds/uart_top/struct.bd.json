@@ -1,0 +1,1073 @@
+{
+  "format": "dolphin-hds-bd",
+  "version": 1,
+  "view": {
+    "library": "uart_lib",
+    "unit": "uart_top",
+    "view": "struct",
+    "language": "verilog",
+    "signals": [
+      {
+        "name": "baud_tick",
+        "mode": "local",
+        "type": "wire",
+        "bounds": "",
+        "signed": false,
+        "group": "",
+        "category": "data",
+        "expression": "",
+        "scheme": "none",
+        "default": "",
+        "reset": "",
+        "comment": "",
+        "value": "",
+        "array": "",
+        "delay": "",
+        "expansion": "",
+        "strength": ""
+      },
+      {
+        "name": "clk",
+        "mode": "input",
+        "type": "wire",
+        "bounds": "",
+        "signed": false,
+        "group": "",
+        "category": "data",
+        "expression": "",
+        "scheme": "none",
+        "default": "",
+        "reset": "",
+        "comment": "",
+        "value": "",
+        "array": "",
+        "delay": "",
+        "expansion": "",
+        "strength": ""
+      },
+      {
+        "name": "rst",
+        "mode": "input",
+        "type": "wire",
+        "bounds": "",
+        "signed": false,
+        "group": "",
+        "category": "data",
+        "expression": "",
+        "scheme": "none",
+        "default": "",
+        "reset": "",
+        "comment": "",
+        "value": "",
+        "array": "",
+        "delay": "",
+        "expansion": "",
+        "strength": ""
+      },
+      {
+        "name": "tx_data",
+        "mode": "input",
+        "type": "wire",
+        "bounds": "[7:0]",
+        "signed": false,
+        "group": "",
+        "category": "data",
+        "expression": "",
+        "scheme": "none",
+        "default": "",
+        "reset": "",
+        "comment": "",
+        "value": "",
+        "array": "",
+        "delay": "",
+        "expansion": "",
+        "strength": ""
+      },
+      {
+        "name": "tx_start",
+        "mode": "input",
+        "type": "wire",
+        "bounds": "",
+        "signed": false,
+        "group": "",
+        "category": "data",
+        "expression": "",
+        "scheme": "none",
+        "default": "",
+        "reset": "",
+        "comment": "",
+        "value": "",
+        "array": "",
+        "delay": "",
+        "expansion": "",
+        "strength": ""
+      },
+      {
+        "name": "tx",
+        "mode": "output",
+        "type": "wire",
+        "bounds": "",
+        "signed": false,
+        "group": "",
+        "category": "data",
+        "expression": "",
+        "scheme": "none",
+        "default": "",
+        "reset": "",
+        "comment": "",
+        "value": "",
+        "array": "",
+        "delay": "",
+        "expansion": "",
+        "strength": ""
+      },
+      {
+        "name": "tx_busy",
+        "mode": "output",
+        "type": "wire",
+        "bounds": "",
+        "signed": false,
+        "group": "",
+        "category": "data",
+        "expression": "",
+        "scheme": "none",
+        "default": "",
+        "reset": "",
+        "comment": "",
+        "value": "",
+        "array": "",
+        "delay": "",
+        "expansion": "",
+        "strength": ""
+      },
+      {
+        "name": "rx",
+        "mode": "input",
+        "type": "wire",
+        "bounds": "",
+        "signed": false,
+        "group": "",
+        "category": "data",
+        "expression": "",
+        "scheme": "none",
+        "default": "",
+        "reset": "",
+        "comment": "",
+        "value": "",
+        "array": "",
+        "delay": "",
+        "expansion": "",
+        "strength": ""
+      },
+      {
+        "name": "rx_data",
+        "mode": "output",
+        "type": "wire",
+        "bounds": "[7:0]",
+        "signed": false,
+        "group": "",
+        "category": "data",
+        "expression": "",
+        "scheme": "none",
+        "default": "",
+        "reset": "",
+        "comment": "",
+        "value": "",
+        "array": "",
+        "delay": "",
+        "expansion": "",
+        "strength": ""
+      },
+      {
+        "name": "rx_valid",
+        "mode": "output",
+        "type": "wire",
+        "bounds": "",
+        "signed": false,
+        "group": "",
+        "category": "data",
+        "expression": "",
+        "scheme": "none",
+        "default": "",
+        "reset": "",
+        "comment": "",
+        "value": "",
+        "array": "",
+        "delay": "",
+        "expansion": "",
+        "strength": ""
+      }
+    ],
+    "parameters": [],
+    "instances": [
+      {
+        "id": "in1",
+        "name": "u_baud",
+        "library": "uart_lib",
+        "unit": "baud_gen",
+        "params": [],
+        "pins": [
+          {
+            "name": "clk",
+            "mode": "input",
+            "net": "clk",
+            "order": 1,
+            "x": 261.6666666666667,
+            "y": 493.3333333333333,
+            "side": "left",
+            "bounds": "",
+            "clock": false,
+            "arrow": "",
+            "slice": ""
+          },
+          {
+            "name": "rst_n",
+            "mode": "input",
+            "net": "rst",
+            "order": 2,
+            "x": 261.6666666666667,
+            "y": 506.6666666666667,
+            "side": "left",
+            "bounds": "",
+            "clock": false,
+            "arrow": "",
+            "slice": ""
+          },
+          {
+            "name": "baud_tick",
+            "mode": "output",
+            "net": "baud_tick",
+            "order": 3,
+            "x": 418.33333333333337,
+            "y": 493.3333333333333,
+            "side": "right",
+            "bounds": "",
+            "clock": false,
+            "arrow": "",
+            "slice": ""
+          }
+        ],
+        "show_params": false,
+        "show_library": false,
+        "source": "",
+        "x": 266.6666666666667,
+        "y": 466.6666666666667,
+        "w": 146.66666666666669,
+        "h": 66.66666666666667,
+        "show_instance": true,
+        "text_pos": null,
+        "text_name": true,
+        "text_type": false,
+        "text_type_name": false,
+        "text_signed": false,
+        "text_value": false,
+        "selectable_text": true,
+        "portmap_frame": false,
+        "portmap_text": "",
+        "attributes": "",
+        "fg": "#00e600",
+        "bg": "#ffffff",
+        "line_color": "#007800",
+        "fill_style": "solid",
+        "line_style": "solid",
+        "line_width": 1,
+        "shape": "rectangle"
+      },
+      {
+        "id": "in2",
+        "name": "u_tx",
+        "library": "uart_lib",
+        "unit": "uart_tx",
+        "params": [],
+        "pins": [
+          {
+            "name": "baud_tick",
+            "mode": "input",
+            "net": "baud_tick",
+            "order": 1,
+            "x": 661.6666666666667,
+            "y": 453.3333333333333,
+            "side": "left",
+            "bounds": "",
+            "clock": false,
+            "arrow": "",
+            "slice": ""
+          },
+          {
+            "name": "clk",
+            "mode": "input",
+            "net": "clk",
+            "order": 2,
+            "x": 661.6666666666667,
+            "y": 466.6666666666667,
+            "side": "left",
+            "bounds": "",
+            "clock": false,
+            "arrow": "",
+            "slice": ""
+          },
+          {
+            "name": "rst",
+            "mode": "input",
+            "net": "rst",
+            "order": 3,
+            "x": 661.6666666666667,
+            "y": 479.99999999999994,
+            "side": "left",
+            "bounds": "",
+            "clock": false,
+            "arrow": "",
+            "slice": ""
+          },
+          {
+            "name": "tx_data",
+            "mode": "input",
+            "net": "tx_data",
+            "order": 4,
+            "x": 661.6666666666667,
+            "y": 493.3333333333333,
+            "side": "left",
+            "bounds": "[7:0]",
+            "clock": false,
+            "arrow": "",
+            "slice": ""
+          },
+          {
+            "name": "tx_start",
+            "mode": "input",
+            "net": "tx_start",
+            "order": 5,
+            "x": 661.6666666666667,
+            "y": 506.6666666666667,
+            "side": "left",
+            "bounds": "",
+            "clock": false,
+            "arrow": "",
+            "slice": ""
+          },
+          {
+            "name": "tx",
+            "mode": "output",
+            "net": "tx",
+            "order": 6,
+            "x": 818.3333333333335,
+            "y": 453.3333333333333,
+            "side": "right",
+            "bounds": "",
+            "clock": false,
+            "arrow": "",
+            "slice": ""
+          },
+          {
+            "name": "tx_busy",
+            "mode": "output",
+            "net": "tx_busy",
+            "order": 7,
+            "x": 818.3333333333335,
+            "y": 466.6666666666667,
+            "side": "right",
+            "bounds": "",
+            "clock": false,
+            "arrow": "",
+            "slice": ""
+          }
+        ],
+        "show_params": false,
+        "show_library": false,
+        "source": "",
+        "x": 666.6666666666667,
+        "y": 426.6666666666667,
+        "w": 146.66666666666669,
+        "h": 106.66666666666667,
+        "show_instance": true,
+        "text_pos": null,
+        "text_name": true,
+        "text_type": false,
+        "text_type_name": false,
+        "text_signed": false,
+        "text_value": false,
+        "selectable_text": true,
+        "portmap_frame": false,
+        "portmap_text": "",
+        "attributes": "",
+        "fg": "#00e600",
+        "bg": "#ffffff",
+        "line_color": "#007800",
+        "fill_style": "solid",
+        "line_style": "solid",
+        "line_width": 1,
+        "shape": "rectangle"
+      },
+      {
+        "id": "in3",
+        "name": "u_rx",
+        "library": "uart_lib",
+        "unit": "uart_rx",
+        "params": [],
+        "pins": [
+          {
+            "name": "baud_tick",
+            "mode": "input",
+            "net": "baud_tick",
+            "order": 1,
+            "x": 1061.6666666666667,
+            "y": 466.66666666666663,
+            "side": "left",
+            "bounds": "",
+            "clock": false,
+            "arrow": "",
+            "slice": ""
+          },
+          {
+            "name": "clk",
+            "mode": "input",
+            "net": "clk",
+            "order": 2,
+            "x": 1061.6666666666667,
+            "y": 480.0,
+            "side": "left",
+            "bounds": "",
+            "clock": false,
+            "arrow": "",
+            "slice": ""
+          },
+          {
+            "name": "rst",
+            "mode": "input",
+            "net": "rst",
+            "order": 3,
+            "x": 1061.6666666666667,
+            "y": 493.33333333333326,
+            "side": "left",
+            "bounds": "",
+            "clock": false,
+            "arrow": "",
+            "slice": ""
+          },
+          {
+            "name": "rx",
+            "mode": "input",
+            "net": "rx",
+            "order": 4,
+            "x": 1061.6666666666667,
+            "y": 506.66666666666663,
+            "side": "left",
+            "bounds": "",
+            "clock": false,
+            "arrow": "",
+            "slice": ""
+          },
+          {
+            "name": "rx_data",
+            "mode": "output",
+            "net": "rx_data",
+            "order": 5,
+            "x": 1218.3333333333335,
+            "y": 466.66666666666663,
+            "side": "right",
+            "bounds": "[7:0]",
+            "clock": false,
+            "arrow": "",
+            "slice": ""
+          },
+          {
+            "name": "rx_valid",
+            "mode": "output",
+            "net": "rx_valid",
+            "order": 6,
+            "x": 1218.3333333333335,
+            "y": 480.0,
+            "side": "right",
+            "bounds": "",
+            "clock": false,
+            "arrow": "",
+            "slice": ""
+          }
+        ],
+        "show_params": false,
+        "show_library": false,
+        "source": "",
+        "x": 1066.6666666666667,
+        "y": 440.0,
+        "w": 146.66666666666669,
+        "h": 93.33333333333334,
+        "show_instance": true,
+        "text_pos": null,
+        "text_name": true,
+        "text_type": false,
+        "text_type_name": false,
+        "text_signed": false,
+        "text_value": false,
+        "selectable_text": true,
+        "portmap_frame": false,
+        "portmap_text": "",
+        "attributes": "",
+        "fg": "#00e600",
+        "bg": "#ffffff",
+        "line_color": "#007800",
+        "fill_style": "solid",
+        "line_style": "solid",
+        "line_width": 1,
+        "shape": "rectangle"
+      }
+    ],
+    "embedded": [],
+    "port_ios": [
+      {
+        "id": "pn1",
+        "name": "clk",
+        "mode": "input",
+        "x": 546.6666666666667,
+        "y": 466.6666666666667,
+        "show_text": true,
+        "text_type": false,
+        "text_type_name": false,
+        "text_signed": false,
+        "text_value": false,
+        "fg": "#000082",
+        "bg": "#ffffff",
+        "line_color": "#000000",
+        "fill_style": "solid",
+        "line_style": "solid",
+        "line_width": 1
+      },
+      {
+        "id": "pn2",
+        "name": "rst",
+        "mode": "input",
+        "x": 546.6666666666667,
+        "y": 480.0,
+        "show_text": true,
+        "text_type": false,
+        "text_type_name": false,
+        "text_signed": false,
+        "text_value": false,
+        "fg": "#000082",
+        "bg": "#ffffff",
+        "line_color": "#000000",
+        "fill_style": "solid",
+        "line_style": "solid",
+        "line_width": 1
+      },
+      {
+        "id": "pn3",
+        "name": "tx_data",
+        "mode": "input",
+        "x": 546.6666666666667,
+        "y": 493.33333333333337,
+        "show_text": true,
+        "text_type": false,
+        "text_type_name": false,
+        "text_signed": false,
+        "text_value": false,
+        "fg": "#000082",
+        "bg": "#ffffff",
+        "line_color": "#000000",
+        "fill_style": "solid",
+        "line_style": "solid",
+        "line_width": 1
+      },
+      {
+        "id": "pn4",
+        "name": "tx_start",
+        "mode": "input",
+        "x": 546.6666666666667,
+        "y": 506.6666666666667,
+        "show_text": true,
+        "text_type": false,
+        "text_type_name": false,
+        "text_signed": false,
+        "text_value": false,
+        "fg": "#000082",
+        "bg": "#ffffff",
+        "line_color": "#000000",
+        "fill_style": "solid",
+        "line_style": "solid",
+        "line_width": 1
+      },
+      {
+        "id": "pn5",
+        "name": "tx",
+        "mode": "output",
+        "x": 933.3333333333334,
+        "y": 453.33333333333337,
+        "show_text": true,
+        "text_type": false,
+        "text_type_name": false,
+        "text_signed": false,
+        "text_value": false,
+        "fg": "#000082",
+        "bg": "#ffffff",
+        "line_color": "#000000",
+        "fill_style": "solid",
+        "line_style": "solid",
+        "line_width": 1
+      },
+      {
+        "id": "pn6",
+        "name": "tx_busy",
+        "mode": "output",
+        "x": 933.3333333333334,
+        "y": 466.6666666666667,
+        "show_text": true,
+        "text_type": false,
+        "text_type_name": false,
+        "text_signed": false,
+        "text_value": false,
+        "fg": "#000082",
+        "bg": "#ffffff",
+        "line_color": "#000000",
+        "fill_style": "solid",
+        "line_style": "solid",
+        "line_width": 1
+      },
+      {
+        "id": "pn7",
+        "name": "clk",
+        "mode": "input",
+        "x": 946.6666666666667,
+        "y": 480.0,
+        "show_text": true,
+        "text_type": false,
+        "text_type_name": false,
+        "text_signed": false,
+        "text_value": false,
+        "fg": "#000082",
+        "bg": "#ffffff",
+        "line_color": "#000000",
+        "fill_style": "solid",
+        "line_style": "solid",
+        "line_width": 1
+      },
+      {
+        "id": "pn8",
+        "name": "rst",
+        "mode": "input",
+        "x": 946.6666666666667,
+        "y": 493.33333333333337,
+        "show_text": true,
+        "text_type": false,
+        "text_type_name": false,
+        "text_signed": false,
+        "text_value": false,
+        "fg": "#000082",
+        "bg": "#ffffff",
+        "line_color": "#000000",
+        "fill_style": "solid",
+        "line_style": "solid",
+        "line_width": 1
+      },
+      {
+        "id": "pn9",
+        "name": "rx",
+        "mode": "input",
+        "x": 946.6666666666667,
+        "y": 506.6666666666667,
+        "show_text": true,
+        "text_type": false,
+        "text_type_name": false,
+        "text_signed": false,
+        "text_value": false,
+        "fg": "#000082",
+        "bg": "#ffffff",
+        "line_color": "#000000",
+        "fill_style": "solid",
+        "line_style": "solid",
+        "line_width": 1
+      },
+      {
+        "id": "pn10",
+        "name": "rx_data",
+        "mode": "output",
+        "x": 1333.3333333333335,
+        "y": 466.6666666666667,
+        "show_text": true,
+        "text_type": false,
+        "text_type_name": false,
+        "text_signed": false,
+        "text_value": false,
+        "fg": "#000082",
+        "bg": "#ffffff",
+        "line_color": "#000000",
+        "fill_style": "solid",
+        "line_style": "solid",
+        "line_width": 1
+      },
+      {
+        "id": "pn11",
+        "name": "rx_valid",
+        "mode": "output",
+        "x": 1333.3333333333335,
+        "y": 480.0,
+        "show_text": true,
+        "text_type": false,
+        "text_type_name": false,
+        "text_signed": false,
+        "text_value": false,
+        "fg": "#000082",
+        "bg": "#ffffff",
+        "line_color": "#000000",
+        "fill_style": "solid",
+        "line_style": "solid",
+        "line_width": 1
+      }
+    ],
+    "wires": [
+      {
+        "id": "wn1",
+        "net": "baud_tick",
+        "points": [
+          [
+            423.33333333333337,
+            493.3333333333333
+          ],
+          [
+            533.3333333333334,
+            493.3333333333333
+          ],
+          [
+            533.3333333333334,
+            453.3333333333333
+          ],
+          [
+            656.6666666666667,
+            453.3333333333333
+          ]
+        ],
+        "start": "pin:in1:baud_tick",
+        "end": "pin:in2:baud_tick",
+        "show_text": true,
+        "label": [
+          21.666666666666668,
+          -2.666666666666667
+        ],
+        "label_vertical": false,
+        "slice": ""
+      },
+      {
+        "id": "wn2",
+        "net": "baud_tick",
+        "points": [
+          [
+            423.33333333333337,
+            493.3333333333333
+          ],
+          [
+            746.6666666666667,
+            493.3333333333333
+          ],
+          [
+            746.6666666666667,
+            466.66666666666663
+          ],
+          [
+            1056.6666666666667,
+            466.66666666666663
+          ]
+        ],
+        "start": "pin:in1:baud_tick",
+        "end": "pin:in3:baud_tick",
+        "show_text": true,
+        "label": [
+          21.666666666666668,
+          -2.666666666666667
+        ],
+        "label_vertical": false,
+        "slice": ""
+      },
+      {
+        "id": "wn3",
+        "net": "clk",
+        "points": [
+          [
+            656.6666666666667,
+            466.6666666666667
+          ],
+          [
+            560.0000000000001,
+            466.6666666666667
+          ]
+        ],
+        "start": "pin:in2:clk",
+        "end": "pio:pn1",
+        "show_text": true,
+        "label": null,
+        "label_vertical": false,
+        "slice": ""
+      },
+      {
+        "id": "wn4",
+        "net": "rst",
+        "points": [
+          [
+            656.6666666666667,
+            479.99999999999994
+          ],
+          [
+            560.0000000000001,
+            480.0
+          ]
+        ],
+        "start": "pin:in2:rst",
+        "end": "pio:pn2",
+        "show_text": true,
+        "label": null,
+        "label_vertical": false,
+        "slice": ""
+      },
+      {
+        "id": "wn5",
+        "net": "tx_data",
+        "points": [
+          [
+            656.6666666666667,
+            493.3333333333333
+          ],
+          [
+            560.0000000000001,
+            493.33333333333337
+          ]
+        ],
+        "start": "pin:in2:tx_data",
+        "end": "pio:pn3",
+        "show_text": true,
+        "label": null,
+        "label_vertical": false,
+        "slice": ""
+      },
+      {
+        "id": "wn6",
+        "net": "tx_start",
+        "points": [
+          [
+            656.6666666666667,
+            506.6666666666667
+          ],
+          [
+            560.0000000000001,
+            506.6666666666667
+          ]
+        ],
+        "start": "pin:in2:tx_start",
+        "end": "pio:pn4",
+        "show_text": true,
+        "label": null,
+        "label_vertical": false,
+        "slice": ""
+      },
+      {
+        "id": "wn7",
+        "net": "tx",
+        "points": [
+          [
+            823.3333333333335,
+            453.3333333333333
+          ],
+          [
+            920.0,
+            453.33333333333337
+          ]
+        ],
+        "start": "pin:in2:tx",
+        "end": "pio:pn5",
+        "show_text": true,
+        "label": null,
+        "label_vertical": false,
+        "slice": ""
+      },
+      {
+        "id": "wn8",
+        "net": "tx_busy",
+        "points": [
+          [
+            823.3333333333335,
+            466.6666666666667
+          ],
+          [
+            920.0,
+            466.6666666666667
+          ]
+        ],
+        "start": "pin:in2:tx_busy",
+        "end": "pio:pn6",
+        "show_text": true,
+        "label": null,
+        "label_vertical": false,
+        "slice": ""
+      },
+      {
+        "id": "wn9",
+        "net": "clk",
+        "points": [
+          [
+            1056.6666666666667,
+            480.0
+          ],
+          [
+            960.0000000000001,
+            480.0
+          ]
+        ],
+        "start": "pin:in3:clk",
+        "end": "pio:pn7",
+        "show_text": true,
+        "label": null,
+        "label_vertical": false,
+        "slice": ""
+      },
+      {
+        "id": "wn10",
+        "net": "rst",
+        "points": [
+          [
+            1056.6666666666667,
+            493.33333333333326
+          ],
+          [
+            960.0000000000001,
+            493.33333333333337
+          ]
+        ],
+        "start": "pin:in3:rst",
+        "end": "pio:pn8",
+        "show_text": true,
+        "label": null,
+        "label_vertical": false,
+        "slice": ""
+      },
+      {
+        "id": "wn11",
+        "net": "rx",
+        "points": [
+          [
+            1056.6666666666667,
+            506.66666666666663
+          ],
+          [
+            960.0000000000001,
+            506.6666666666667
+          ]
+        ],
+        "start": "pin:in3:rx",
+        "end": "pio:pn9",
+        "show_text": true,
+        "label": null,
+        "label_vertical": false,
+        "slice": ""
+      },
+      {
+        "id": "wn12",
+        "net": "rx_data",
+        "points": [
+          [
+            1223.3333333333335,
+            466.66666666666663
+          ],
+          [
+            1320.0000000000002,
+            466.6666666666667
+          ]
+        ],
+        "start": "pin:in3:rx_data",
+        "end": "pio:pn10",
+        "show_text": true,
+        "label": null,
+        "label_vertical": false,
+        "slice": ""
+      },
+      {
+        "id": "wn13",
+        "net": "rx_valid",
+        "points": [
+          [
+            1223.3333333333335,
+            480.0
+          ],
+          [
+            1320.0000000000002,
+            480.0
+          ]
+        ],
+        "start": "pin:in3:rx_valid",
+        "end": "pio:pn11",
+        "show_text": true,
+        "label": null,
+        "label_vertical": false,
+        "slice": ""
+      },
+      {
+        "id": "wn14",
+        "net": "clk",
+        "points": [
+          [
+            256.6666666666667,
+            493.3333333333333
+          ],
+          [
+            466.6666666666667,
+            493.3333333333333
+          ],
+          [
+            466.6666666666667,
+            466.6666666666667
+          ],
+          [
+            656.6666666666667,
+            466.6666666666667
+          ]
+        ],
+        "start": "pin:in1:clk",
+        "end": "pin:in2:clk",
+        "show_text": true,
+        "label": [
+          31.666666666666668,
+          -2.666666666666667
+        ],
+        "label_vertical": false,
+        "slice": ""
+      },
+      {
+        "id": "wn15",
+        "net": "rst",
+        "points": [
+          [
+            256.6666666666667,
+            506.6666666666667
+          ],
+          [
+            466.6666666666667,
+            506.6666666666667
+          ],
+          [
+            466.6666666666667,
+            479.99999999999994
+          ],
+          [
+            656.6666666666667,
+            479.99999999999994
+          ]
+        ],
+        "start": "pin:in1:rst_n",
+        "end": "pin:in2:rst",
+        "show_text": true,
+        "label": [
+          31.666666666666668,
+          -2.666666666666667
+        ],
+        "label_vertical": false,
+        "slice": ""
+      }
+    ],
+    "frames": [],
+    "comments": [],
+    "junctions": [],
+    "net_styles": {},
+    "pre_module_directives": "",
+    "post_module_directives": "",
+    "end_module_directives": "",
+    "pre_user_declarations": "",
+    "post_user_declarations": "",
+    "view_area": null,
+    "header": ""
+  }
+}
