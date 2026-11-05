@@ -1,5 +1,5 @@
 """Drive the real HDS (HDL Designer) running on this Windows machine, to study its user
-interface and compare Dolphin HDS against it.
+interface and compare HDL Studio against it.
 
 One command per call, so that each step costs little:
 

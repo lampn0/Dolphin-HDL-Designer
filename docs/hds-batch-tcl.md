@@ -1,6 +1,6 @@
 # Driving HDS 2021.1 from scripts (batch Tcl and GUI)
 
-Notes for the tests that check HDLDesigner against the real HDS installed on the Windows
+Notes for the tests that check HDL Studio against the real HDS installed on the Windows
 machine (`C:\MentorGraphics\HDS_2021.1`): `tests/hds_sync/` and `tests/hds_gui/`. Learned the
 hard way; keep this up to date.
 
@@ -32,7 +32,7 @@ C:\MentorGraphics\HDS_2021.1\bin\hdldesigner.com -hdpfile X.hdp -user_home H -te
 ## Settings that differ between HDS versions
 
 * The local HDS 2021.1 uses Options > Verilog > Style tab width 3 and Instance Parameters
-  Mapping "Positional"; the server's HDS 2024.2 (and HDLDesigner's defaults) use 2 / "Named".
+  Mapping "Positional"; the server's HDS 2024.2 (and HDL Studio's defaults) use 2 / "Named".
   Compare outputs with the same style (`codegen.common.set_style`).
 * Files saved by HDS 2024.2 cannot be read by 2021.1.
 

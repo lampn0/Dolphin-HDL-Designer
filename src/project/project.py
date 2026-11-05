@@ -56,7 +56,7 @@ DEFAULT_VIEWS_FILE = '.dhds_default_views.json'    # in a library's hds folder: 
 @dataclass
 class View:
     """One view of a design unit and the file holding it. `legacy` is True for a view read from an
-    HDS file (.sm / .bd / .sb) rather than from HDLDesigner's own .json.
+    HDS file (.sm / .bd / .sb) rather than from HDL Studio's own .json.
     """
     name: str
     kind: str                 # fsm | bd | symbol | text | other
@@ -236,7 +236,7 @@ class Library:
 
 
 def _graphic_views(udir: str) -> list[View]:
-    """The views found in a unit's graphics folder. When both an HDS file and HDLDesigner's .json
+    """The views found in a unit's graphics folder. When both an HDS file and HDL Studio's .json
     exist for one view, the rules in the loop below decide which one is the view.
     """
     found: dict[tuple[str, str], View] = {}

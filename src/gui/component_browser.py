@@ -11,7 +11,7 @@ from PySide6.QtCore import QMimeData, Qt
 from PySide6.QtGui import QDrag
 from PySide6.QtWidgets import QLabel, QTreeWidget, QTreeWidgetItem, QVBoxLayout, QWidget
 
-MIME_TYPE = 'application/x-dolphin-hds-component'
+MIME_TYPE = 'application/x-vietsemi-hdl-studio-component'
 HINT = 'To instance a component, drag onto a diagram.'
 
 

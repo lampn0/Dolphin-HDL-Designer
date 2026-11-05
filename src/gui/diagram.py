@@ -18,7 +18,7 @@ the view widget: zoom, pan, View Area, grid, keyboard nudges.
 
 Coordinates are scene units = HDS units * SCALE (1/75). When an object still has the geometry
 read from the HDS file (the `hds` dicts of the model) it is drawn exactly as HDS drew it;
-once its text changes, Dolphin lays it out itself.
+once its text changes, HDL Studio lays it out itself.
 """
 from __future__ import annotations
 
@@ -675,7 +675,7 @@ class TransitionLabel(_BoxItem):
 
     def _hds(self) -> dict:
         """The geometry HDS saved for this box, while its texts are still the ones it was
-        saved with (else Dolphin lays the box out)."""
+        saved with (else HDL Studio lays the box out)."""
         g = self.obj.hds
         return g if g.get('box_size') and g.get('sig') == [self.obj.cond, self.obj.actions] else {}
 
@@ -910,7 +910,7 @@ class DeclBlockItem(QGraphicsItem):
         """Saved place of the block, else HDS's default layout above the diagram content."""
         if self.key in self.view.decl_pos:
             return tuple(self.view.decl_pos[self.key])
-        # no place yet (a diagram made by Dolphin): HDS's layout, above the diagram content
+        # no place yet (a diagram made by HDL Studio): HDS's layout, above the diagram content
         m = self.fsm_scene.machine
         nodes = list(m.states) + list(m.points) + list(m.junctions) + list(m.links)
         x0 = min((n.x for n in nodes), default=0.0) - 120
@@ -1331,7 +1331,7 @@ class TransitionItem(QGraphicsPathItem):
     def contextMenuEvent(self, e):
         """The HDS transition menu: Add Route / Remove Route / Remove All Routes / Reverse
         Direction, Cut / Copy / Paste / Paste Special / Delete, Appearance... / Show Text /
-        Object Properties... (entries Dolphin does not have yet are disabled)."""
+        Object Properties... (entries HDL Studio does not have yet are disabled)."""
         from PySide6.QtWidgets import QMenu
         sc = self.fsm_scene
         if not self.isSelected():
@@ -1784,7 +1784,7 @@ class FsmScene(QGraphicsScene):
           - a template ending in a number ("s0", the template of a new HDS diagram): its prefix
             and the smallest free number from there ("s0", "s1", ...; "s0" again once renamed);
           - another template ("ST_"): the template itself, then "ST_1", "ST_2", ...;
-          - no template (diagrams made by Dolphin): as a new HDS diagram, "s0", "s1", ..."""
+          - no template (diagrams made by HDL Studio): as a new HDS diagram, "s0", "s1", ..."""
         import re
         names = {s.name for s in self.machine.states}
         base = getattr(getattr(self, 'view_model', None), 'default_state_name', '') or 's0'

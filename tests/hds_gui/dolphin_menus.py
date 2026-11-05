@@ -1,4 +1,4 @@
-"""Dump the menus of a Dolphin HDS editor window as text, in the format hds.py uses for HDS, so
+"""Dump the menus of a HDL Studio editor window as text, in the format hds.py uses for HDS, so
 the two can be compared with diff.
 
     python tests/hds_gui/dolphin_menus.py bd [struct.bd]  > tests/hds_gui/ref/bd_menus_dolphin.txt
@@ -32,7 +32,7 @@ def dump(menu: QMenu, depth: int, out: list):
 
 
 def main():
-    """Open a Dolphin editor ('bd' or 'fsm') on a sample diagram and print its menu bar in the
+    """Open a HDL Studio editor ('bd' or 'fsm') on a sample diagram and print its menu bar in the
     dump format of hds.py.
     """
     kind = sys.argv[1] if len(sys.argv) > 1 else 'bd'

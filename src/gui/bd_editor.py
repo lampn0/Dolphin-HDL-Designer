@@ -21,6 +21,7 @@ grid. Coordinates are scene units (HDS units / 75); GRID is HDS's 1000-unit grid
 """
 from __future__ import annotations
 
+from version import APP_NAME, about_text
 import os
 import re
 
@@ -48,7 +49,7 @@ from .tables import ParametersTable, SignalsTable
 from .undo import SnapshotUndo, load_view_state, save_view_state
 
 # Diagram text. HDS diagrams name "courier", which HDS on Windows draws with its default font
-# (Arial, hds_user_prefs defaultFont); Dolphin draws it the same way. (The names are older than
+# (Arial, hds_user_prefs defaultFont); HDL Studio draws it the same way. (The names are older than
 # that choice: MONO is not monospaced.)
 DIAGRAM_FONT = 'Arial'
 MONO = QFont(DIAGRAM_FONT, 8)
@@ -860,7 +861,7 @@ class EmbeddedItem(_Movable):
             p.restore()
         if box is None:
             # no view yet: a small page with a red "?" in the bottom-left corner, where HDS
-            # shows its "no view" icon (Dolphin's own drawing, not the HDS bitmap)
+            # shows its "no view" icon (HDL Studio's own drawing, not the HDS bitmap)
             icon_r = QRectF(3, r.height() - 16, 10, 13)
             p.setBrush(Qt.white); p.setPen(QPen(QColor(90, 90, 90), 0))
             p.drawRect(icon_r)
@@ -930,7 +931,7 @@ class _InlineText(QPlainTextEdit):
 
 
 class EmbeddedViewDialog(QDialog):
-    """"Create Embedded View" (HDS): which view an empty embedded block gets. Dolphin HDS writes
+    """"Create Embedded View" (HDS): which view an empty embedded block gets. HDL Studio writes
     the HDL text itself, so only Text is offered; the graphical kinds are shown greyed."""
 
     def __init__(self, block_name: str, parent=None):
@@ -2424,7 +2425,7 @@ class InstanceParamsPanel(QWidget):
 # ---------------------------------------------------------------------------
 class BdEditorWindow(QMainWindow):
     """The block diagram editor window (layout as HDS 2021.1: one page at a time - diagram, Signal
-    Table, Parameters Table, Compiler Directives - the Diagram Browser on the right, Dolphin's
+    Table, Parameters Table, Compiler Directives - the Diagram Browser on the right, HDL Studio's
     own Properties / Messages docks hidden at start).
 
     Data flow is the same as in the state diagram editor (main_window.MainWindow): the window
@@ -2497,7 +2498,7 @@ class BdEditorWindow(QMainWindow):
         nd.setWidget(self.navigator); self.addDockWidget(Qt.RightDockWidgetArea, nd)
         self.browser_dock = nd
 
-        # Dolphin's own panels (component parameters, embedded block code, messages): kept, but
+        # HDL Studio's own panels (component parameters, embedded block code, messages): kept, but
         # hidden at start so the window looks like HDS; Edit Code / HDS Log Window show them
         self.inst_panel = InstanceParamsPanel(self.changed)
         side = QTabWidget()
@@ -2524,8 +2525,8 @@ class BdEditorWindow(QMainWindow):
             a = QAction(text, self)
             a.triggered.connect(lambda checked=False, k=k: self.tabs.setCurrentIndex(k))
             self.addAction(a)
-        about = QAction('About Dolphin HDS', self)
-        about.triggered.connect(lambda: QMessageBox.about(self, 'Dolphin HDS', 'Dolphin HDS - block diagram editor'))
+        about = QAction(f'About {APP_NAME}', self)
+        about.triggered.connect(lambda: QMessageBox.about(self, APP_NAME, about_text('Block diagram editor')))
         self.addAction(about)
         arrange_menus(self, BD_MENUS)
         # HDS shows "Ready" in the status bar when no message is shown
@@ -2778,7 +2779,7 @@ class BdEditorWindow(QMainWindow):
         return ''
 
     def _restore_view_position(self):
-        """Open where the user left the diagram: Dolphin's own saved view first, then the view
+        """Open where the user left the diagram: HDL Studio's own saved view first, then the view
         area HDS saved in the diagram (shown at 100% from its top-left corner, as HDS opens
         it), else the whole diagram."""
         if self.canvas.restore(load_view_state(self._view_key())):
@@ -2786,7 +2787,7 @@ class BdEditorWindow(QMainWindow):
         if self.bd.view_area:
             # HDS "100%" draws 72 diagram units per screen pixel; the import scale is 1/75, so
             # the same size on screen is a zoom of 75/72 (measured on HDS 2021.1: components
-            # and the grid are 4% larger than Dolphin at zoom 1)
+            # and the grid are 4% larger than HDL Studio at zoom 1)
             k = 75 / 72
             x0, y0, _x1, _y1 = self.bd.view_area
             self.canvas.resetTransform()
@@ -3332,7 +3333,7 @@ class BdEditorWindow(QMainWindow):
 
     # -- component popup menu (same entries and order as the legacy editor) -------------
     def _component_menu(self, m: QMenu, inst: BdInstance, pos: QPointF, ro: bool):
-        """The component popup menu, entries and order as in HDS (entries Dolphin does not have yet are
+        """The component popup menu, entries and order as in HDS (entries HDL Studio does not have yet are
         disabled).
         """
         du = self._unit_of(inst)

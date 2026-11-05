@@ -70,19 +70,19 @@ Lock files a test leaves (some tests simulate a crash) stay in its temporary cop
 ## Driving the real HDS (`tests/hds_gui/`)
 
 Tools to study the user interface of the HDS installed on this Windows machine (HDS 2021.1, on
-the sample project `D:/workspace/hds_reference`) and compare Dolphin HDS with it. One short
+the sample project `D:/workspace/hds_reference`) and compare HDL Studio with it. One short
 command per step; screenshots go to `tests/hds_gui/out/` (not in git), reference dumps to
 `tests/hds_gui/ref/`.
 
 | Script | Does |
 |---|---|
 | `hds.py` | list HDS windows, screenshot a window or region, dump a menu bar as text, pick a menu entry, click / drag / type. See its docstring. |
-| `dolphin_menus.py` | dump a Dolphin editor's menus in the same text format |
-| `diff_menus.py` | diff two menu dumps (HDS vs Dolphin) |
-| `dolphin_shot.py`, `dolphin_net_shot.py`, `dolphin_port_shot.py` | the same views / actions in Dolphin, for side-by-side screenshots |
-| `dolphin_fsm_region.py fsm.sm name x0 y0 x1 y1 [px/unit]` | a region of a state diagram (HDS units) as Dolphin draws it, to put next to an HDS screenshot |
+| `dolphin_menus.py` | dump a HDL Studio editor's menus in the same text format |
+| `diff_menus.py` | diff two menu dumps (HDS vs HDL Studio) |
+| `dolphin_shot.py`, `dolphin_net_shot.py`, `dolphin_port_shot.py` | the same views / actions in HDL Studio, for side-by-side screenshots |
+| `dolphin_fsm_region.py fsm.sm name x0 y0 x1 y1 [px/unit]` | a region of a state diagram (HDS units) as HDL Studio draws it, to put next to an HDS screenshot |
 
-Behaviour read from HDS 2021.1 this way (and now followed by Dolphin): the block diagram menus;
+Behaviour read from HDS 2021.1 this way (and now followed by HDL Studio): the block diagram menus;
 the window layout (Diagram Browser with the Structure Navigator on the right, one page at a
 time, "Ready" in the status bar, the view saved in the diagram); net drawing (a click in open
 space adds a corner, a double-click ends, a click on an object ends and connects; the new net is
@@ -99,16 +99,16 @@ example `always @ *`), so many differences are expected: the HDS comparison belo
 
 ## HDS comparison (`tests/hds_compare/`)
 
-Compares Dolphin HDS with what HDS 2024.2 really generates today, with the same diagrams and
+Compares HDL Studio with what HDS 2024.2 really generates today, with the same diagrams and
 the same user settings.
 
 1. `python tests/hds_compare/hds_reference.py` copies the project to `/tmp/dolphin_hds_check` on
    the Linux server where HDS is installed (the real project is only read), runs HDS in batch
    mode to generate every library, and downloads the result to `tests/hds_compare/reference/`.
    The docstring of the script lists the settings (host, project, HDS home, license, ssh key).
-2. `python tests/hds_compare/compare.py` generates every view with Dolphin in memory and writes
+2. `python tests/hds_compare/compare.py` generates every view with HDL Studio in memory and writes
    `results/report.md` (one line per view) and `results/diffs/<lib>.<unit>.diff` (HDS = `-`,
-   Dolphin = `+`) for each view that differs.
+   HDL Studio = `+`) for each view that differs.
 
 `reference/` and `results/` hold the project's design content and are not in git.
 
@@ -117,7 +117,7 @@ Reading and writing `.sm` files (both tools edit the same file):
 | Script | Checks |
 |---|---|
 | `roundtrip_files.py` | every .sm / .bd / .sb parsed and written back is byte for byte the same |
-| `fsm_geometry.py fsm.sm ...` | Dolphin draws each state, action block, transition box and priority circle where the HDS file has it (within 30 HDS units) |
+| `fsm_geometry.py fsm.sm ...` | HDL Studio draws each state, action block, transition box and priority circle where the HDS file has it (within 30 HDS units) |
 | `sm_write.py [root ...]` | `export_sm`: every .sm written back unchanged is identical; edits (move, rename, condition, actions, delete) and new objects (states with actions, junction, link, transitions) are read back; a second save changes nothing |
 
 The files written by `export_sm` were opened in HDS 2021.1 (gc_control_fsm): moved / renamed
@@ -130,24 +130,24 @@ out of date with their symbols ("Use Update Interface"), so there is nothing to 
 
 ## Working with both tools on one diagram (`tests/hds_sync/`)
 
-Checks that an edit saved by Dolphin HDS is what HDS 2021.1 (installed on this machine) reads,
+Checks that an edit saved by HDL Studio is what HDS 2021.1 (installed on this machine) reads,
 keeps and generates, through `fsm.sm` and `symbol.sb`. HDS runs in batch mode
 (`hdldesigner.com -tcl`, no window) with its own copy of your HDS preferences
 (`tests/hds_sync/work/home`, `team`), on a scratch project made in `tests/hds_sync/work/`.
 
 ```
-python tests/hds_sync/sync_fsm.py               # all Dolphin -> HDS cases (about 1 minute)
+python tests/hds_sync/sync_fsm.py               # all HDL Studio -> HDS cases (about 1 minute)
 python tests/hds_sync/sync_fsm.py port delete   # only these cases
 ```
 
 | File | Does |
 |---|---|
 | `hds_batch.py` | `run_tcl(hdp, commands)`: one HDS batch run, each Tcl command's result or error |
-| `sync_fsm.py` | per case and base diagram (uart_tx, gc_control_fsm): the edit in the Dolphin editor window, File > Save path; then HDS opens symbol and diagram, checks their integrity, saves, generates; then: HDS keeps the edit, same HDL (indentation apart: 3 here, 2 on the server), symbol ports |
-| `sync_bd.py read` | HDS -> Dolphin for block diagrams: a copy of all libraries of the real project; batch HDS opens every struct.bd of protocol_controller, checks its integrity, generates; Dolphin generates from the same file with this HDS's Verilog style (tab 3, positional parameters); exact compare. Units whose symbols were saved by HDS 2024.2 are reported SKIP (2021.1 cannot read them). Report results/bd_read.md |
-| `sync_bd.py h2d` | HDS -> Dolphin for block diagrams, edits made by HDS itself in batch with its Block Diagram Tcl API (BDAPI: openBDBatch, setCptGenParam, addCmpInst, addNet, connectCmpPortToNet, addPortIO, addGenParam, createEmbeddedBlock, saveBDBatch, closeBDBatch; no move / rename / delete): HDS saves, checks integrity, generates; Dolphin reads every edit and generates the same HDL |
+| `sync_fsm.py` | per case and base diagram (uart_tx, gc_control_fsm): the edit in the HDL Studio editor window, File > Save path; then HDS opens symbol and diagram, checks their integrity, saves, generates; then: HDS keeps the edit, same HDL (indentation apart: 3 here, 2 on the server), symbol ports |
+| `sync_bd.py read` | HDS -> HDL Studio for block diagrams: a copy of all libraries of the real project; batch HDS opens every struct.bd of protocol_controller, checks its integrity, generates; HDL Studio generates from the same file with this HDS's Verilog style (tab 3, positional parameters); exact compare. Units whose symbols were saved by HDS 2024.2 are reported SKIP (2021.1 cannot read them). Report results/bd_read.md |
+| `sync_bd.py h2d` | HDS -> HDL Studio for block diagrams, edits made by HDS itself in batch with its Block Diagram Tcl API (BDAPI: openBDBatch, setCptGenParam, addCmpInst, addNet, connectCmpPortToNet, addPortIO, addGenParam, createEmbeddedBlock, saveBDBatch, closeBDBatch; no move / rename / delete): HDS saves, checks integrity, generates; HDL Studio reads every edit and generates the same HDL |
 | `hds_do.py` | gentle driver of the HDS window already open (HDS's GUI is single-instance): real clicks only on HDS pixels, keys only while HDS has the focus, several steps in one call. Never force HDS to the front (that crashed HDS once) |
-| `check_h2d.py {tx,gc} <unit dir> <original fsm.sm>` | HDS -> Dolphin: a diagram edited and saved in HDS's window. tx (uart_tx): state renamed, condition, state actions, state moved, state + transition added, input port added. gc (gc_control_fsm): state renamed (HDS renames the links to it), multi-line condition, transition actions, CASE expression, input port added. Checks: Dolphin reads every edit, nothing else changed, symbol ports, same HDL as HDS, Dolphin re-saves it byte for byte, a Dolphin edit of it opens and generates in HDS |
+| `check_h2d.py {tx,gc} <unit dir> <original fsm.sm>` | HDS -> HDL Studio: a diagram edited and saved in HDS's window. tx (uart_tx): state renamed, condition, state actions, state moved, state + transition added, input port added. gc (gc_control_fsm): state renamed (HDS renames the links to it), multi-line condition, transition actions, CASE expression, input port added. Checks: HDL Studio reads every edit, nothing else changed, symbol ports, same HDL as HDS, HDL Studio re-saves it byte for byte, a HDL Studio edit of it opens and generates in HDS |
 
 Cases: unchanged, state moved and renamed, state and transitions added, condition and
 actions changed, state actions changed, transition deleted, statement blocks / directives /

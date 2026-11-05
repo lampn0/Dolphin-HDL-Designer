@@ -1,4 +1,4 @@
-"""The working session, kept between runs in ~/.config/dolphin-hds:
+"""The working session, kept between runs in ~/.config/vietsemi-hdl-studio:
 
 - session.json: the open project, its library tabs and the editor windows
   (with their place on screen), so the tool reopens where the user left off;

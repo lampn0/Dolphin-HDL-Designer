@@ -1,5 +1,5 @@
 """(QTest.mouseMove moves the real cursor, which another window may take: the preview is
-updated directly.) Add Port In in an empty Dolphin diagram like the HDS check: the preview under the cursor,
+updated directly.) Add Port In in an empty HDL Studio diagram like the HDS check: the preview under the cursor,
 then the port placed with a click (and the preview again at another place)."""
 import os, sys
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))), 'src'))

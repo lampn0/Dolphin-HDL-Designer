@@ -32,7 +32,7 @@ Last reviewed: 2026-11-05.
 ### State diagram
 - Generation styles other than "3 always blocks / case": 1 or 2 always blocks, If / One-Hot,
   output encoded, pragmas (State Machine Properties > Generation is shown greyed).
-- Writing back to the `.sm`: hierarchical states added in HDLDesigner, added / removed
+- Writing back to the `.sm`: hierarchical states added in HDL Studio, added / removed
   concurrent machines, parameter table changes (reported as warnings when saved).
 - Copy / paste of diagram objects; Change To; Re-level (add / remove hierarchy).
 

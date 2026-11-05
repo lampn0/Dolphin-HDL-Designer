@@ -3,7 +3,7 @@
 Layout, as in HDS 2021.1: the diagram canvas (diagram.FsmScene / FsmGraphicsView) in the
 middle, one page at a time (State Diagram, Signals Table, Parameters Table: the tab bar is
 hidden, pages are reached from the Structure Navigator and the menus), the Diagram Browser
-(Structure Navigator + Content) on the right, and Dolphin's own Properties / Messages docks,
+(Structure Navigator + Content) on the right, and HDL Studio's own Properties / Messages docks,
 hidden at start.
 
 Data flow:
@@ -16,6 +16,7 @@ Data flow:
 """
 from __future__ import annotations
 
+from version import APP_NAME, about_text
 import os
 
 from PySide6.QtCore import QEvent, QObject, QSettings, QSize, Qt, QTimer
@@ -108,7 +109,7 @@ class MainWindow(QMainWindow):
         self.log_dock = log_dock
         self.resizeDocks([log_dock], [110], Qt.Vertical)
         self.resizeDocks([dock, nav_dock], [330, 230], Qt.Horizontal)
-        # Dolphin's own panels: kept, hidden at start so the window looks like HDS
+        # HDL Studio's own panels: kept, hidden at start so the window looks like HDS
         dock.hide()
         log_dock.hide()
 
@@ -119,8 +120,8 @@ class MainWindow(QMainWindow):
             a = QAction(text, self)
             a.triggered.connect(lambda checked=False, w=widget: self.tabs.setCurrentWidget(w))
             self.addAction(a)
-        about = QAction('About Dolphin HDS', self)
-        about.triggered.connect(lambda: QMessageBox.about(self, 'Dolphin HDS', 'Dolphin HDS - state machine editor'))
+        about = QAction(f'About {APP_NAME}', self)
+        about.triggered.connect(lambda: QMessageBox.about(self, APP_NAME, about_text('State machine editor')))
         self.addAction(about)
         self._build_menu_commands()
         arrange_menus(self, fsm_menus(standalone=self.context is None))
@@ -344,7 +345,7 @@ class MainWindow(QMainWindow):
 
     def edit_object(self, obj):
         """Double-click on an object. States and transitions: the HDS "SM Object Properties"
-        dialog; other objects: Dolphin's Properties panel (shown when hidden)."""
+        dialog; other objects: HDL Studio's Properties panel (shown when hidden)."""
         from model import State, Transition
         if isinstance(obj, (State, Transition)) and not self.scene.readonly:
             from .sm_props_dialog import SmObjectPropertiesDialog
@@ -362,7 +363,7 @@ class MainWindow(QMainWindow):
     def show_popup(self, item, screen_pos):
         """The right-click menus of the HDS 2021.1 state diagram, entry for entry as HDS shows
         them on gc_control_fsm (tests/hds_gui/out/pop_*.png). Transitions have their own
-        (TransitionItem). Entries Dolphin has no command for yet are disabled.
+        (TransitionItem). Entries HDL Studio has no command for yet are disabled.
 
             diagram   Signals Table, Open Up | Undo, Redo | Paste | View Area, Zoom In, Zoom Out,
                       Zoom Last | View Page, Print Page... | Object Visibility... |
@@ -732,7 +733,7 @@ class MainWindow(QMainWindow):
         return self.path or ''
 
     def _restore_view_position(self):
-        """Open where the user left the diagram: Dolphin's own saved view first, then the view
+        """Open where the user left the diagram: HDL Studio's own saved view first, then the view
         area HDS saved for the machine (at HDS's 100%, which is a zoom of 75/72 here, from its
         top-left corner), else the whole diagram."""
         if self.canvas.restore(load_view_state(self._view_key())):
@@ -848,7 +849,7 @@ class MainWindow(QMainWindow):
         if m is None:
             return
         # the kinds HDS 2021.1 lists there (junctions, links, recovery and interrupt points are
-        # not listed; HDS also lists comment texts, which Dolphin's state diagrams do not have)
+        # not listed; HDS also lists comment texts, which HDL Studio's state diagrams do not have)
         groups = [('state', [(s.name, s.id) for s in m.states])]
         for kind in ('clock', 'reset', 'enable'):
             groups.append((kind, [(p.kind, p.id) for p in m.points if p.kind == kind]))
@@ -935,7 +936,7 @@ class MainWindow(QMainWindow):
                                 f'[{self.machine.name}]{star}{ro} (State Diagram)')
             return
         name = os.path.basename(self.path) if self.path else 'untitled'
-        self.setWindowTitle(f'Dolphin HDS (prototype) — {v.library}/{v.unit}/{v.view} '
+        self.setWindowTitle(f'{APP_NAME} — {v.library}/{v.unit}/{v.view} '
                             f'[{self.machine.name}] (State Diagram) — {name}{star}')
 
     def generate_hdl(self):
@@ -1033,7 +1034,7 @@ class MainWindow(QMainWindow):
         self.statusBar().showMessage(f'Saved {self.path}', 4000)
 
     def _reload_scene(self):
-        """After saving to an HDS .sm: the objects added in Dolphin now have the ids of their
+        """After saving to an HDS .sm: the objects added in HDL Studio now have the ids of their
         labels in the file (hds.export_sm), so the scene is built again on them; the view
         stays where it is."""
         gv = self.scene.views()[0] if self.scene.views() else None
@@ -1065,11 +1066,11 @@ class MainWindow(QMainWindow):
 
     def _dir(self) -> str:
         """Folder the file dialogs start in (the last one used)."""
-        return QSettings('Dolphin', 'HDS-proto').value('lastDir', os.getcwd())
+        return QSettings('Vietsemi', 'HDL Studio').value('lastDir', os.getcwd())
 
     def _remember(self, path: str):
         """Remember the folder of `path` for the next file dialog."""
-        QSettings('Dolphin', 'HDS-proto').setValue('lastDir', os.path.dirname(path))
+        QSettings('Vietsemi', 'HDL Studio').setValue('lastDir', os.path.dirname(path))
 
     def closeEvent(self, e):
         """Close only after unsaved changes were saved or discarded; then remember the view position

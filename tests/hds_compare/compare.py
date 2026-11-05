@@ -1,16 +1,16 @@
-"""Compare the HDL Dolphin HDS generates with the HDL HDS generated from the same diagrams
+"""Compare the HDL HDL Studio generates with the HDL HDS generated from the same diagrams
 (tests/hds_compare/reference/, made by hds_reference.py).
 
     python tests/hds_compare/compare.py            # all graphical views HDS generated
     python tests/hds_compare/compare.py fsm        # only state machines (or: bd)
     python tests/hds_compare/compare.py fsm gc_zqlat_fsm    # only units whose name contains this
 
-For every unit with a block diagram or state machine that HDS generated, Dolphin generates in
+For every unit with a block diagram or state machine that HDS generated, HDL Studio generates in
 memory and the two files are compared from the first line after the header ("// Internal
 Declarations" for a block diagram, "// State encoding" for a state machine; the header holds
 dates and user names). Results:
   results/report.md          one line per view: MATCH, or the number of differing lines
-  results/diffs/<lib>.<unit>.diff   a unified diff (HDS = "-", Dolphin = "+") for each mismatch
+  results/diffs/<lib>.<unit>.diff   a unified diff (HDS = "-", HDL Studio = "+") for each mismatch
 Exit code 1 when a view differs or fails.
 """
 from __future__ import annotations
@@ -67,7 +67,7 @@ def main() -> int:
             key = f'{lib.name}.{du.name}'
             try:
                 text, _ = generate_text(load_view(lib, du, g))
-            except Exception as e:                   # Dolphin cannot read or generate the view
+            except Exception as e:                   # HDL Studio cannot read or generate the view
                 counts['dolphin error'] += 1
                 rows.append((key, g.kind, 'DOLPHIN ERROR ' + repr(e)[:200]))
                 continue
@@ -75,14 +75,14 @@ def main() -> int:
             mark = MARK[g.kind]
             if mark not in hds or mark not in text:
                 counts['no marker'] += 1
-                rows.append((key, g.kind, f'no "{mark}" in {"HDS" if mark not in hds else "Dolphin"} output'))
+                rows.append((key, g.kind, f'no "{mark}" in {"HDS" if mark not in hds else "HDL Studio"} output'))
                 continue
             a, b = hds[hds.index(mark):], text[text.index(mark):]
             if a == b:
                 counts['match'] += 1
                 rows.append((key, g.kind, 'MATCH'))
                 continue
-            diff = list(difflib.unified_diff(a.split('\n'), b.split('\n'), f'HDS {key}', f'Dolphin {key}',
+            diff = list(difflib.unified_diff(a.split('\n'), b.split('\n'), f'HDS {key}', f'HDL Studio {key}',
                                              lineterm='', n=3))
             changed = sum(1 for l in diff if l[:1] in '+-' and l[:3] not in ('+++', '---'))
             counts['differ'] += 1
@@ -93,7 +93,7 @@ def main() -> int:
     rows.sort(key=lambda r: (r[2] != 'MATCH', r[1], r[0]))
     summary = ', '.join(f'{k}: {v}' for k, v in sorted(counts.items()))
     with open(os.path.join(RESULTS, 'report.md'), 'w', encoding='utf-8', newline='\n') as f:
-        f.write(f'# Dolphin HDS vs HDS generation ({" ".join(kinds)}{" " + " ".join(names) if names else ""})\n\n')
+        f.write(f'# HDL Studio vs HDS generation ({" ".join(kinds)}{" " + " ".join(names) if names else ""})\n\n')
         f.write(f'{summary}\n\n| View | Kind | Result |\n|---|---|---|\n')
         for key, kind, result in rows:
             f.write(f'| {key} | {kind} | {result} |\n')

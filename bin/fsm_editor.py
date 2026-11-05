@@ -2,7 +2,7 @@
 
     python bin/fsm_editor.py                 # opens the built-in example FSM (traffic light)
     python bin/fsm_editor.py path/to/fsm.sm  # opens an HDS state diagram (.sm)
-    python bin/fsm_editor.py my.fsm.json     # opens a diagram saved by HDLDesigner (.fsm.json)
+    python bin/fsm_editor.py my.fsm.json     # opens a diagram saved by HDL Studio (.fsm.json)
 
 Useful to look at or debug one diagram quickly. Inside a project, the Design Manager opens
 the same editor window (gui.main_window.MainWindow) with locks, sessions and generation
@@ -17,12 +17,14 @@ sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(
 from PySide6.QtWidgets import QApplication  # noqa: E402  (import after the sys.path change)
 
 from gui.main_window import MainWindow  # noqa: E402
+from version import APP_NAME, VENDOR  # noqa: E402
 
 
 def main() -> int:
     """Create the application and one editor window, open the file given (if any), run Qt."""
     app = QApplication(sys.argv)
-    app.setApplicationName('Dolphin HDS prototype')
+    app.setApplicationName(APP_NAME)
+    app.setOrganizationName(VENDOR)
     win = MainWindow()
     if len(sys.argv) > 1:
         win.open_path(sys.argv[1])

@@ -123,7 +123,7 @@ class SnapshotUndo(QObject):
         return bool(self._redo)
 
 
-_SETTINGS = ('Dolphin', 'HDS')
+_SETTINGS = ('Vietsemi', 'HDL Studio')
 
 
 def save_view_state(key: str, state: dict) -> None:

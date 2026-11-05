@@ -1,4 +1,4 @@
-"""The Design Manager: the main window of HDLDesigner (the HDS Design Manager).
+"""The Design Manager: the main window of HDL Studio (the HDS Design Manager).
 
     DesignManager    the window: menus and toolbars, the left launcher bar, the Project page
                      (libraries of the .hdp), one LibraryExplorer tab per library opened, the
@@ -33,7 +33,7 @@ from PySide6.QtWidgets import (QApplication, QCheckBox, QDockWidget, QFileDialog
 from hdl.parser import HAVE_SLANG
 from bd_model import BlockDiagram
 from model import FsmView
-from version import __version__
+from version import APP_NAME, __version__, about_text
 from prefs import Prefs, expand_header
 from session import EditorState, Session, drop_autosave, read_autosave, write_autosave
 from project.generate import GenResult, load_view, native_path
@@ -445,7 +445,7 @@ class LibraryExplorer(QWidget):
 
     def _unit_menu(self, m: QMenu, du: DesignUnit, view: View | None):
         """Popup menu of a design unit or one of its views, in the legacy Design Explorer order.
-        Entries for flows outside Dolphin HDS are shown greyed."""
+        Entries for flows outside HDL Studio are shown greyed."""
         target = view or du.default_view()
 
         def item(menu, text, slot=None, key=''):
@@ -656,7 +656,7 @@ class DesignManager(QMainWindow):
         return a
 
     def _build_actions(self):
-        """Menu bar of the legacy Design Manager. Entries Dolphin HDS does not offer are greyed;
+        """Menu bar of the legacy Design Manager. Entries HDL Studio does not offer are greyed;
         entries that need a selection (`when`) are enabled from the current selection."""
         mb = self.menuBar()
         self._when: list[tuple[QAction, str]] = []
@@ -767,7 +767,7 @@ class DesignManager(QMainWindow):
         em.addSeparator()
         sub(em, 'Design&Checker', [('&Run analysis', self.check_selected),
                                    ('&Manage Policies/RuleSets', lambda: self.statusBar().showMessage(
-                                       'Dolphin HDS checks with its built-in Verilog/SystemVerilog parser; '
+                                       'HDL Studio checks with its built-in Verilog/SystemVerilog parser; '
                                        'there are no rule sets to manage', 6000))])
         item(em, 'Edit Black-Box Settings...')
         item(em, 'Pr&operties...', lambda: self._with_unit(lambda du: self._explorer_call(
@@ -795,7 +795,7 @@ class DesignManager(QMainWindow):
                                    checked=True)
         for text in ('&Side Data/Downstream', '&Tasks and Templates'):
             item(sw, text, lambda checked=False, t=text: self.statusBar().showMessage(
-                f'{t.replace("&", "")}: not part of Dolphin HDS (Verilog/SystemVerilog design management only)', 6000))
+                f'{t.replace("&", "")}: not part of HDL Studio (Verilog/SystemVerilog design management only)', 6000))
         sw.addSeparator()
         item(sw, 'Layout')
         tb = vm.addMenu('T&oolbars')
@@ -819,7 +819,7 @@ class DesignManager(QMainWindow):
         item(hm, '&Update Graphics')
         hm.addSeparator()
         item(hm, 'Generate VHDL Configurations...', lambda: self.statusBar().showMessage(
-            'No VHDL configurations: Dolphin HDS projects are Verilog/SystemVerilog only', 6000))
+            'No VHDL configurations: HDL Studio projects are Verilog/SystemVerilog only', 6000))
         hm.addSeparator()
         item(hm, 'View &Generated HDL', self.open_selected_hdl, 'Ctrl+G')
 
@@ -893,9 +893,7 @@ class DesignManager(QMainWindow):
         for text in ('Register Assistant', 'SVAssistant', 'DesignChecker'):
             sub(hp, text)
         hp.addSeparator()
-        item(hp, '&About Dolphin HDS', lambda: QMessageBox.about(
-            self, 'Dolphin HDS', f'HDLDesigner (Dolphin HDS) {__version__}\n'
-                                 'HDL design management, generation and maintenance.'))
+        item(hp, f'&About {APP_NAME}', lambda: QMessageBox.about(self, APP_NAME, about_text()))
         self._build_left_bar()
         for m in mb.findChildren(QMenu):
             m.aboutToShow.connect(self._update_menu_states)
@@ -1215,8 +1213,8 @@ class DesignManager(QMainWindow):
             elif slot is not None:
                 b.clicked.connect(slot)
             else:
-                # shown as in the legacy tool, but these flows are not part of Dolphin HDS
-                tip = tip or f'{text.replace(chr(10), " ").replace("&&", "&")}: not part of Dolphin HDS '                     '(design management, generation and maintenance only)'
+                # shown as in the legacy tool, but these flows are not part of HDL Studio
+                tip = tip or f'{text.replace(chr(10), " ").replace("&&", "&")}: not part of HDL Studio '                     '(design management, generation and maintenance only)'
                 b.clicked.connect(lambda checked=False, t=tip: self.statusBar().showMessage(t, 6000))
             b.setToolTip(tip)
             return b
@@ -1244,7 +1242,7 @@ class DesignManager(QMainWindow):
             b.setIcon(project_icon(icon_name)); b.setIconSize(QSize(24, 24))
             b.setAutoRaise(True); b.setFixedWidth(120)
             if slot is None:
-                b.setEnabled(False); b.setToolTip('Not available in Dolphin HDS yet')
+                b.setEnabled(False); b.setToolTip('Not available in HDL Studio yet')
             else:
                 b.clicked.connect(slot)
             return b

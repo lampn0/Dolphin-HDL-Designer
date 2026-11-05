@@ -73,7 +73,7 @@ class State:
     encoding: str = ''               # manual encoding value
     actions_x: float | None = None   # top-left of the action box on the diagram (None = automatic)
     actions_y: float | None = None
-    radius: float | None = None      # circle radius saved by HDS (None = Dolphin's default)
+    radius: float | None = None      # circle radius saved by HDS (None = HDL Studio's default)
     is_wait: bool = False            # a wait state (HDS: circle in an octagon)
     wait: str = ''                   # its wait text, e.g. "wait 2"
     hier: bool = False               # a hierarchical state (HDS CompositeState): its states are inside
@@ -235,12 +235,12 @@ class FsmView:
     global_post_actions: str = ''
     registered_affix: str = '_r'
     clocked_affix: str = '_cld'
-    # name of a new state, from the diagram's default-state template ('' = Dolphin's S<n>)
+    # name of a new state, from the diagram's default-state template ('' = HDL Studio's S<n>)
     default_state_name: str = ''
     # text of a new junction, from the diagram's default-junction template (HDS: "&")
     default_junction_symbol: str = ''
     # where the declaration blocks are drawn on the diagram (scene units, top-left of each title):
-    # global, concurrent, module, status, statereg, compdir; missing = Dolphin's default layout
+    # global, concurrent, module, status, statereg, compdir; missing = HDL Studio's default layout
     decl_pos: dict = field(default_factory=dict)
     # the declaration blocks hidden on the diagram (HDS: their title text has isHidden 1)
     decl_hidden: list = field(default_factory=list)

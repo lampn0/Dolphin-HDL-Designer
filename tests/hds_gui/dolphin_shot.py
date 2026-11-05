@@ -1,4 +1,4 @@
-"""Screenshot of a Dolphin HDS block diagram editor window (rendered by Qt, no screen needed),
+"""Screenshot of a HDL Studio block diagram editor window (rendered by Qt, no screen needed),
 to compare with the same diagram in HDS.
 
     python tests/hds_gui/dolphin_shot.py <name> [scale] [x0 y0 x1 y1] [--diagram struct.bd | fsm.sm]

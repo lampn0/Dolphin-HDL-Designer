@@ -1,6 +1,6 @@
 """Design Manager option dialogs laid out as in the legacy tool:
 File > Page Setup... (Layout, Boundaries, Misc) and Options > Verilog... (File, Style,
-Headers, Default Directives, Default Packages). Settings Dolphin HDS uses are live; the
+Headers, Default Directives, Default Packages). Settings HDL Studio uses are live; the
 others are kept in the preferences or shown greyed."""
 from __future__ import annotations
 
@@ -45,7 +45,7 @@ class _ColorButton(QPushButton):
 
 
 class PageSetupDialog(QDialog):
-    """Kept in the preferences (page_setup); printing is not part of Dolphin HDS yet."""
+    """Kept in the preferences (page_setup); printing is not part of HDL Studio yet."""
 
     def __init__(self, prefs: Prefs, parent=None):
         """Build the Layout, Boundaries and Misc tabs from prefs.page_setup."""

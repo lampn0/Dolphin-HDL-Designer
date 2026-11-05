@@ -1,4 +1,4 @@
-"""Diff two menu dumps (HDS vs Dolphin), ignoring the "(disabled)" marks.
+"""Diff two menu dumps (HDS vs HDL Studio), ignoring the "(disabled)" marks.
 
     python tests/hds_gui/diff_menus.py tests/hds_gui/ref/bd_menus_hds.txt tests/hds_gui/ref/bd_menus_dolphin.txt
 """

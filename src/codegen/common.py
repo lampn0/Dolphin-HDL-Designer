@@ -8,7 +8,7 @@ IND = '  '
 # Options > Verilog > Style, as HDS applies them when it generates (set_style): the indent
 # width ("Tab Width (spaces)"), "Instance Parameters Mapping" (Named / Positional) and "Allow
 # implicit event expression (@*)". The defaults are those of the server's HDS 2024.2 settings
-# Dolphin was matched against; HDS 2021.1 out of the box uses 3 / Positional.
+# HDL Studio was matched against; HDS 2021.1 out of the box uses 3 / Positional.
 STYLE = {'tab_width': 2, 'param_mapping': 'Named', 'implicit_event': False}
 
 

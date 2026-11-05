@@ -1,9 +1,9 @@
-"""Write a state diagram back to an HDS .sm file, so HDS and Dolphin HDS both read and write the
+"""Write a state diagram back to an HDS .sm file, so HDS and HDL Studio both read and write the
 same file.
 
 The file is not generated from scratch: the .sm the diagram was read from is parsed again and
-only what was changed in Dolphin is changed in it (positions, texts, end points of transitions,
-deleted objects). Everything Dolphin does not model (HDS settings, colours, fonts, uids, ...)
+only what was changed in HDL Studio is changed in it (positions, texts, end points of transitions,
+deleted objects). Everything HDL Studio does not model (HDS settings, colours, fonts, uids, ...)
 is written back exactly as it was; a diagram saved without changes is byte for byte the file
 that was read (see hds.sexpr).
 
@@ -13,7 +13,7 @@ that was read (see hds.sexpr).
 transition id, 'pts' (the line as drawn: start, route points, end; scene units) and 'prio'
 (the centre of its priority circle).
 
-Objects added in Dolphin are made from the templates HDS keeps in the file (model >
+Objects added in HDL Studio are made from the templates HDS keeps in the file (model >
 defaultState, defaultTransition, ...), with new uids and labels; their ids in the view are
 changed to the labels they got ('n<label>'), as if read from the file.
 
@@ -22,7 +22,7 @@ names and internal signal affixes of the State Machine Properties dialog, the Si
 (changed / added / removed / renamed signals), and the unit's symbol.sb when the ports changed
 (hds.export_sb).
 
-Not written yet (reported as warnings): hierarchical states added in Dolphin, added or removed
+Not written yet (reported as warnings): hierarchical states added in HDL Studio, added or removed
 concurrent machines, changes of the parameter table.
 
 Order of export_sm(): for each machine, update the objects that exist in the file, create the
@@ -567,7 +567,7 @@ _POINT_TEMPLATES = {'clock': 'defaultClk', 'reset': 'defaultRst', 'enable': 'def
 
 
 def _new_node(doc: Document, obj, alloc: _Alloc, warn: list[str]) -> Node | None:
-    """An HDS object for a state, junction, link or point added in Dolphin."""
+    """An HDS object for a state, junction, link or point added in HDL Studio."""
     from model import Junction, Link, Point, State
     if isinstance(obj, State):
         if obj.hier:
@@ -630,7 +630,7 @@ def _new_node(doc: Document, obj, alloc: _Alloc, warn: list[str]) -> Node | None
 
 def _new_transition(doc: Document, t, m: Machine, labels: dict[str, int], geo: dict | None,
                     alloc: _Alloc) -> Node | None:
-    """An HDS transition for one added in Dolphin: its ends, line, text block and priority."""
+    """An HDS transition for one added in HDL Studio: its ends, line, text block and priority."""
     n = _template(doc, 'defaultTransition')
     a, b = labels.get(t.src), labels.get(t.dst)
     if n is None or a is None or b is None:
@@ -666,7 +666,7 @@ def _new_transition(doc: Document, t, m: Machine, labels: dict[str, int], geo: d
             # automatic reset actions)
             _hide(line, not (t.actions.strip() or _from_reset(t, m)))
         _fit_block(tb, before)
-        # the block where Dolphin has it, else beside the middle of the line
+        # the block where HDL Studio has it, else beside the middle of the line
         box = _xt(tb.get('shape'))
         if box:
             if t.label_x is not None:
@@ -867,7 +867,7 @@ def _signal_table(doc: Document) -> tuple[Node, list, Node] | None:
 
 
 def _port_fields(leaf: Node, s, order: int | None) -> None:
-    """Write one signal into its LeafLogPort (an existing one keeps what Dolphin does not
+    """Write one signal into its LeafLogPort (an existing one keeps what HDL Studio does not
     model, e.g. protocolPorts, and its uid). Field order as HDS writes it:
     LeafLogPort: port uid cat scheme expr defVal rstVal ass; LogicalPort: lang m decl;
     Decl: n t b s eolc o iv ub."""
@@ -1017,7 +1017,7 @@ def export_sm(view: FsmView, src: str, dst: str,
     for csm, m, o in zip(_machine_nodes(doc), view.machines, orig.machines):
         diagram = csm.get('topDiagram')
         by_label = {n.label: n for n in _labelled(diagram)}
-        added: dict[str, str] = {}               # Dolphin id -> 'n<label>' of the objects added
+        added: dict[str, str] = {}               # HDL Studio id -> 'n<label>' of the objects added
         new_ids = {x.id for x in (*m.states, *m.junctions, *m.links, *m.points, *m.transitions)}
         olds = {x.id: x for x in (*o.states, *o.junctions, *o.links, *o.points, *o.transitions)}
         for oid in olds:

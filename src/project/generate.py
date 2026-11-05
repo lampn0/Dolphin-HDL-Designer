@@ -33,7 +33,7 @@ def load_view(lib: Library, unit: DesignUnit, view: View):
 
 
 def native_path(lib: Library, unit: str, view_name: str, kind: str) -> str:
-    """Path of a view saved in HDLDesigner's own format: hds/<unit>/<view>.<kind>.json."""
+    """Path of a view saved in HDL Studio's own format: hds/<unit>/<view>.<kind>.json."""
     return os.path.join(lib.unit_dir(unit), f'{view_name}.{kind}.json')
 
 

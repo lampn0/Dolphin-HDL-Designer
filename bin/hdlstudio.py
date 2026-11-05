@@ -1,19 +1,19 @@
-"""Start HDLDesigner: the Design Manager window (projects, libraries, design units).
+"""Start HDL Studio: the Design Manager window (projects, libraries, design units).
 
-    python bin/hdldesigner.py                      # reopen the last session (project and windows)
-    python bin/hdldesigner.py path/to/project.hdp  # open a project (its last windows too, if it
+    python bin/hdlstudio.py                      # reopen the last session (project and windows)
+    python bin/hdlstudio.py path/to/project.hdp  # open a project (its last windows too, if it
                                                    # was the last one opened)
-    python bin/hdldesigner.py --new                # start empty, without the last session
+    python bin/hdlstudio.py --new                # start empty, without the last session
 
 This file is only a launcher: it puts ../src on the Python path, creates the Qt application
 and the DesignManager window, then hands control to the Qt event loop. All the real work is
 in src/. It is also the entry point PyInstaller freezes
-(resources/scripts/HDLDesigner.spec).
+(resources/scripts/HDLStudio.spec).
 """
 import os
 import sys
 
-# Repository layout: <root>/bin/hdldesigner.py and <root>/src. When frozen by PyInstaller
+# Repository layout: <root>/bin/hdlstudio.py and <root>/src. When frozen by PyInstaller
 # the package is already bundled and this path simply does not exist (harmless).
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), 'src'))
 
@@ -21,14 +21,17 @@ from PySide6.QtCore import QTimer  # noqa: E402  (import after the sys.path chan
 from PySide6.QtWidgets import QApplication  # noqa: E402
 
 from gui.design_manager import DesignManager  # noqa: E402
+from version import APP_NAME, VENDOR  # noqa: E402
 
 
 def main() -> int:
     """Create the application and the Design Manager, open the project / session, run Qt."""
     app = QApplication(sys.argv)
     # Name Qt shows in dialogs. Preferences and session do not depend on it: they live in
-    # ~/.config/dolphin-hds (see src/prefs.py and src/session.py).
-    app.setApplicationName('Dolphin HDS')
+    # ~/.config/vietsemi-hdl-studio (see src/prefs.py and src/session.py).
+    app.setApplicationName(APP_NAME)
+    app.setOrganizationName(VENDOR)
+    app.setOrganizationDomain('vietsemi.org')
     dm = DesignManager()
     dm.show()
     # Positional arguments (not starting with --) are project files; only the first is used.

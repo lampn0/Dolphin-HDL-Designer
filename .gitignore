@@ -1,5 +1,5 @@
 # ---------------------------------------------------------------------------------------------
-# HDLDesigner - files git must never track
+# HDL Studio - files git must never track
 # ---------------------------------------------------------------------------------------------
 
 # Python byte code and local virtual environments
@@ -8,7 +8,7 @@ __pycache__/
 .venv/
 venv/
 
-# Packaging output (PyInstaller, see resources/scripts/HDLDesigner.spec)
+# Packaging output (PyInstaller, see resources/scripts/HDLStudio.spec)
 build/
 dist/
 *.zip
@@ -17,7 +17,7 @@ dist/
 .vscode/
 .idea/
 
-# Files HDS / HDLDesigner create next to a design (locks, caches, backups)
+# Files HDS / HDL Studio create next to a design (locks, caches, backups)
 *.lck
 *.bak
 .hdlsidedata/

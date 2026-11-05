@@ -1,4 +1,4 @@
-# Developing and maintaining HDLDesigner
+# Developing and maintaining Vietsemi HDL Studio
 
 Everything needed to change the code safely: set-up, layout, conventions, tests, packaging.
 
@@ -23,7 +23,7 @@ CentOS Stream 9 also needs the Qt xcb libraries:
 Run from the repository root:
 
 ```
-python bin/hdldesigner.py [project.hdp] [--new]
+python bin/hdlstudio.py [project.hdp] [--new]
 python bin/fsm_editor.py [file.sm | file.fsm.json]
 ```
 
@@ -36,7 +36,7 @@ The layout follows the HDS installation (`bin`, `docs`, `examples`, `resources`,
 
 | Folder | Holds |
 |---|---|
-| `bin/` | launchers: `hdldesigner.py` (Design Manager), `fsm_editor.py`, and shell wrappers |
+| `bin/` | launchers: `hdlstudio.py` (Design Manager), `fsm_editor.py`, and shell wrappers |
 | `src/` | the application code; top-level modules and sub-packages (see [architecture.md](architecture.md)) |
 | `libs/` | HDL libraries shipped with the tool, in the HDS library layout (`<lib>/hdl`, `<lib>/hds`) |
 | `resources/` | images (screenshots), drawings (diagrams of the docs), scripts (packaging) |
@@ -74,7 +74,7 @@ what each covers and the environment variables.
 python -m unittest discover -s tests          # unit tests (seconds)
 python tests/gui/run_all.py                    # GUI tests, real windows: leave mouse and keyboard alone
 python tests/hds_compare/compare.py            # generated HDL vs HDS 2024.2 (needs reference/)
-python tests/hds_sync/sync_fsm.py              # Dolphin -> HDS 2021.1 round trips (local HDS)
+python tests/hds_sync/sync_fsm.py              # HDL Studio -> HDS 2021.1 round trips (local HDS)
 ```
 
 Several tests read a real HDS project (default `D:\workspace\src`, read only) or the sample
@@ -82,14 +82,14 @@ files of `DHDS_SAMPLES`; tests that write work on temporary copies.
 
 ## 5. Packaging
 
-`resources/scripts/HDLDesigner.spec` is the PyInstaller recipe. With PyInstaller installed:
+`resources/scripts/HDLStudio.spec` is the PyInstaller recipe. With PyInstaller installed:
 
 ```
 powershell -ExecutionPolicy Bypass -File resources\scripts\build_windows.ps1     # Windows
 bash resources/scripts/build_linux.sh                                            # CentOS 9
 ```
 
-Both build `dist/HDLDesigner/` and pack it as `dist/HDLDesigner-<version>-<os>-x64.zip|tar.gz`
+Both build `dist/HDLStudio/` and pack it as `dist/HDLStudio-<version>-<os>-x64.zip|tar.gz`
 (the version is `__version__` in `src/version.py`).
 
 ## 6. Releasing a change

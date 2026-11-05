@@ -3,6 +3,7 @@ already has. Entries that do not exist yet appear disabled, so the layout
 matches even where the feature is not implemented."""
 from __future__ import annotations
 
+from version import APP_NAME
 from PySide6.QtGui import QAction
 from PySide6.QtWidgets import QMainWindow, QMenu
 
@@ -59,7 +60,7 @@ def arrange_menus(win: QMainWindow, spec: list[tuple[str, list]]) -> None:
             menu.aboutToShow.connect(win.update_menu_states)
 
 
-NOT_AVAILABLE = ['(not available in Dolphin HDS)']
+NOT_AVAILABLE = ['(not available in HDL Studio)']
 
 _EDIT = ['@undo', '@redo', '-', '@cut', '@copy', '@paste', '@delete', '-', '@select_all', '-', '@find', '@replace',
          '-', '@object_props', '@edit_text']
@@ -70,7 +71,7 @@ def fsm_menus(standalone: bool = False) -> list:
     """The state diagram editor menus, entry for entry as HDS 2021.1 shows them (read from the
     running HDS, saved in tests/hds_gui/ref/fsm_menus_hds.txt); VHDL-only entries and the
     third-party tool flows are left out, as for BD_MENUS. Outside a project (standalone) the
-    File menu also has Dolphin's own New / Open / Import commands."""
+    File menu also has HDL Studio's own New / Open / Import commands."""
     own = ['-', 'New', 'Open...', 'Import HDS state machine (.sm)...'] if standalone else []
     return [
         ('&File', [('&New', ['Design Content...', 'Test Bench...']),
@@ -114,7 +115,7 @@ def fsm_menus(standalone: bool = False) -> list:
                       ('Master Preferences', ['Apply to New Objects', 'Apply to New and Existing Objects',
                                               'Update from Diagram'])]),
         ('&Window', ['@log_window', 'Task Log Window', '@design_manager', 'Component Browser']),
-        ('&Help', ['@shortcuts_help', '-', 'About Dolphin HDS']),
+        ('&Help', ['@shortcuts_help', '-', 'About ' + APP_NAME]),
     ]
 
 
@@ -125,7 +126,7 @@ _BD_GENERATE = ['@generate', '@generate_blocks', '@generate_components', '@gener
 # The block diagram editor menus, entry for entry as HDS 2021.1 shows them (read from the
 # running HDS with tests/hds_gui/hds.py, saved in tests/hds_gui/ref/bd_menus_hds.txt).
 # VHDL-only entries and the third-party tool flows (ModelSim, Precision, DesignChecker,
-# SVAssistant) are left out: Dolphin HDS is for Verilog / SystemVerilog only. Entries Dolphin
+# SVAssistant) are left out: HDL Studio is for Verilog / SystemVerilog only. Entries HDL Studio
 # cannot do yet are plain text: they are shown greyed out at their HDS place.
 _ON_OFF = ['On', 'Off']
 _SHOW_HIDE_EDIT = ['Show', 'Hide', 'Edit...']
@@ -186,7 +187,7 @@ BD_MENUS = [
                   ('Master Preferences', ['Apply to New Objects', 'Apply to New and Existing Objects',
                                           'Update from Diagram'])]),
     ('&Window', ['@log_window', 'Task Log Window', '@design_manager', 'Component Browser']),
-    ('&Help', ['@shortcuts_help', '-', 'About Dolphin HDS']),
+    ('&Help', ['@shortcuts_help', '-', 'About ' + APP_NAME]),
 ]
 
 DM_MENUS = [

@@ -1,20 +1,20 @@
-# HDLDesigner user guide
+# Vietsemi HDL Studio user guide
 
-How to work with HDLDesigner day to day: projects, libraries, the editors and generation.
+How to work with HDL Studio day to day: projects, libraries, the editors and generation.
 Installation is in the [README](../README.md); the design of the tool in
 [architecture.md](architecture.md).
 
 Start the tool from the repository root:
 
 ```
-python bin/hdldesigner.py                     # Design Manager, reopens the last session
-python bin/hdldesigner.py path/to/project.hdp # open a project directly
-python bin/hdldesigner.py --new               # start empty
+python bin/hdlstudio.py                     # Design Manager, reopens the last session
+python bin/hdlstudio.py path/to/project.hdp # open a project directly
+python bin/hdlstudio.py --new               # start empty
 python bin/fsm_editor.py [file.sm]            # the state diagram editor on its own
 ```
 
 A sample project is in `examples/uart_hds/uart.hdp` (made with HDS 2021.1) and
-`examples/uart_dolphin/uart.hdp` (the same design built with HDLDesigner).
+`examples/uart_studio/uart.hdp` (the same design built with HDL Studio).
 
 ## Tasks
 
@@ -38,8 +38,8 @@ A sample project is in `examples/uart_hds/uart.hdp` (made with HDS 2021.1) and
 | Preferences | Default language (SystemVerilog), state declaration, encoding, file naming rule, **header template**, external editor |
 
 ## Session and unsaved work
-- **Reopen where you left off:** starting the tool (`python bin/hdldesigner.py`) reopens the last project, its library tabs and every editor window (place on screen, current tab, text cursor line). The session is kept in `~/.config/dolphin-hds/session.json` and updated as windows open and close. `python bin/hdldesigner.py project.hdp` opens that project (with its last windows if it was the last one); `--new` starts empty; Options > Preferences can turn this off.
-- **Crash protection:** every 30 s, unsaved diagrams and HDL text are copied to `~/.config/dolphin-hds/autosave/`. The copy is removed when the editor is saved or closed normally. If the tool stopped abnormally, opening the view again asks whether to recover the unsaved changes.
+- **Reopen where you left off:** starting the tool (`python bin/hdlstudio.py`) reopens the last project, its library tabs and every editor window (place on screen, current tab, text cursor line). The session is kept in `~/.config/vietsemi-hdl-studio/session.json` and updated as windows open and close. `python bin/hdlstudio.py project.hdp` opens that project (with its last windows if it was the last one); `--new` starts empty; Options > Preferences can turn this off.
+- **Crash protection:** every 30 s, unsaved diagrams and HDL text are copied to `~/.config/vietsemi-hdl-studio/autosave/`. The copy is removed when the editor is saved or closed normally. If the tool stopped abnormally, opening the view again asks whether to recover the unsaved changes.
 
 ## Protection
 - **Edit lock:** opening a view to edit creates `<file>.lck` in the same format as the old tool. If someone else is editing, you can open it read-only or reset the lock. A lock you left yourself on this machine from a run that no longer exists (a crash, a killed tool) is taken over without asking, with a line in the Log.

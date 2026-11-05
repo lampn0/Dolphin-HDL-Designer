@@ -1,14 +1,14 @@
 """Block diagrams (struct.bd) in both tools.
 
-    python tests/hds_sync/sync_bd.py read [library ...]      # HDS -> Dolphin: reading HDS's files
+    python tests/hds_sync/sync_bd.py read [library ...]      # HDS -> HDL Studio: reading HDS's files
 
 read: every block diagram of a library of the real project (default: protocol_controller), on
 a copy in tests/hds_sync/work/bd_read: HDS 2021.1 (batch) opens each struct.bd, checks its
-integrity and generates its HDL; Dolphin reads the same struct.bd and generates. The HDL is
-compared from "// Internal Declarations" on, exactly: Dolphin generates with this HDS's Verilog
+integrity and generates its HDL; HDL Studio reads the same struct.bd and generates. The HDL is
+compared from "// Internal Declarations" on, exactly: HDL Studio generates with this HDS's Verilog
 style options (LOCAL_STYLE: tab width 3, positional parameter mapping).
 In the copy, the HDL of units with a graphical view is moved aside (HDS does not generate over
-HDL it takes for source) and Dolphin's own .json views are removed (Dolphin must read the HDS
+HDL it takes for source) and HDL Studio's own .json views are removed (HDL Studio must read the HDS
 file). Diffs: results/bd_read_<unit>.diff, report results/bd_read.md.
 """
 from __future__ import annotations
@@ -37,7 +37,7 @@ def from_mark(text: str) -> str:
 
 def make_copy(root: str, libs: list[str]) -> str:
     """The libraries (hds + hdl) and the include folder of the real project, in a project of
-    their own; generated HDL and Dolphin's json views out of the way."""
+    their own; generated HDL and HDL Studio's json views out of the way."""
     if os.path.isdir(root):
         shutil.rmtree(root)
     os.makedirs(root)
@@ -70,7 +70,7 @@ def make_copy(root: str, libs: list[str]) -> str:
     return hdp
 
 
-# HDS 2021.1's Options > Verilog > Style on this machine (read from its dialog): Dolphin
+# HDS 2021.1's Options > Verilog > Style on this machine (read from its dialog): HDL Studio
 # generates with the same, so the HDL is compared exactly, indentation included
 LOCAL_STYLE = {'tab_width': 3, 'param_mapping': 'Positional', 'implicit_event': False}
 
@@ -81,7 +81,7 @@ def all_libs() -> list[str]:
 
 
 def read(libs: list[str]) -> int:
-    """HDS -> Dolphin: batch HDS generates every block diagram of `libs`, Dolphin generates the
+    """HDS -> HDL Studio: batch HDS generates every block diagram of `libs`, HDL Studio generates the
     same files with the same style; compare and write results/bd_read.md. Returns the exit code.
     """
     from codegen.common import set_style
@@ -127,7 +127,7 @@ def read(libs: list[str]) -> int:
             continue
         if not gen or os.path.getsize(gen[0]) == 0:
             # files saved by a newer HDS (the server's 2024.2) are not readable by 2021.1: not
-            # a difference between Dolphin and HDS
+            # a difference between HDL Studio and HDS
             if unreadable:
                 rows.append((u, integ, 'SKIP: HDS 2021.1 cannot read files saved by HDS 2024.2 ('
                              + ', '.join(sorted(unreadable)) + ')'))
@@ -135,13 +135,13 @@ def read(libs: list[str]) -> int:
                 rows.append((u, integ, 'HDS wrote no HDL'))
             continue
         a, b = from_mark(open(gen[0], encoding='utf-8', errors='replace').read()), from_mark(text)
-        diff = list(difflib.unified_diff(a.split('\n'), b.split('\n'), f'HDS {u}', f'Dolphin {u}', lineterm='', n=2))
+        diff = list(difflib.unified_diff(a.split('\n'), b.split('\n'), f'HDS {u}', f'HDL Studio {u}', lineterm='', n=2))
         if diff:
             open(os.path.join(RESULTS, f'bd_read_{u}.diff'), 'w', encoding='utf-8', newline='\n').write('\n'.join(diff) + '\n')
         n = sum(1 for l in diff if l[:1] in '+-' and l[:3] not in ('+++', '---'))
         rows.append((u, integ, 'MATCH' if not diff else f'{n} lines differ'))
     with open(os.path.join(RESULTS, 'bd_read.md'), 'w', encoding='utf-8', newline='\n') as f:
-        f.write('# HDS -> Dolphin: block diagrams read from struct.bd\n\n| Unit | HDS integrity | HDL |\n|---|---|---|\n')
+        f.write('# HDS -> HDL Studio: block diagrams read from struct.bd\n\n| Unit | HDS integrity | HDL |\n|---|---|---|\n')
         for u, integ, res_ in rows:
             f.write(f'| {u} | {"1" if integ else "FAIL"} | {res_} |\n')
     for u, integ, res_ in rows:
@@ -151,7 +151,7 @@ def read(libs: list[str]) -> int:
     return 0 if good == len(rows) else 1
 
 
-# HDS -> Dolphin: edits made by HDS itself, with its Block Diagram Tcl API (BDAPI, HDS Tcl API
+# HDS -> HDL Studio: edits made by HDS itself, with its Block Diagram Tcl API (BDAPI, HDS Tcl API
 # reference, "Block Diagram Commands"; batch mode: openBDBatch ... saveBDBatch closeBDBatch).
 # BDAPI only adds, connects and sets: there is no command to move, rename or delete.
 H2D_EDITS = {
@@ -180,7 +180,7 @@ H2D_EDITS = {
 
 def h2d() -> int:
     """For each diagram of H2D_EDITS, on a fresh copy: HDS applies the edits and saves
-    (struct.bd and symbol.sb), checks the file's integrity, generates; Dolphin reads the file:
+    (struct.bd and symbol.sb), checks the file's integrity, generates; HDL Studio reads the file:
     the edits are there, and its HDL is HDS's, exactly."""
     from codegen.common import set_style
     from hds.import_bd import import_bd
@@ -231,7 +231,7 @@ def h2d() -> int:
         text, warn = generate_text(bd)
         hdl = os.path.join(root, 'libs', lib, 'hdl', f'{u}_struct.v')
         hds = open(hdl, encoding='utf-8', errors='replace').read() if os.path.exists(hdl) else ''
-        diff = list(difflib.unified_diff(from_mark(hds).split('\n'), from_mark(text).split('\n'), 'HDS', 'Dolphin',
+        diff = list(difflib.unified_diff(from_mark(hds).split('\n'), from_mark(text).split('\n'), 'HDS', 'HDL Studio',
                                          lineterm='', n=2))
         if diff:
             os.makedirs(RESULTS, exist_ok=True)

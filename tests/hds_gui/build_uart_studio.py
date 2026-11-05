@@ -1,7 +1,7 @@
-"""Build the UART of examples/uart_hds (made with HDS 2021.1) again with Dolphin HDS, in
-examples/uart_dolphin, through the Design Manager and the editors, then generate it.
+"""Build the UART of examples/uart_hds (made with HDS 2021.1) again with HDL Studio, in
+examples/uart_studio, through the Design Manager and the editors, then generate it.
 
-    python tests/hds_gui/build_uart_dolphin.py
+    python tests/hds_gui/build_uart_studio.py
 
 Same design as in HDS: uart_tx and uart_rx state machines (IDLE, START, DATA, STOP), the text
 module baud_gen, and the block diagram uart_top joining them. Each step uses the command a
@@ -18,8 +18,8 @@ from PySide6.QtCore import QPointF, Qt, QTimer  # noqa: E402
 from PySide6.QtTest import QTest  # noqa: E402
 from PySide6.QtWidgets import QApplication, QLineEdit  # noqa: E402
 
-# the project rebuilt by this script: examples/uart_dolphin of this repository
-EXAMPLE_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))), 'examples', 'uart_dolphin')
+# the project rebuilt by this script: examples/uart_studio of this repository
+EXAMPLE_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))), 'examples', 'uart_studio')
 PROJECT = os.path.join(EXAMPLE_DIR, 'uart.hdp')
 app = QApplication(sys.argv)
 from gui import bd_editor  # noqa: E402

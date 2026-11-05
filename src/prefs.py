@@ -1,4 +1,4 @@
-"""User preferences, stored as JSON in ~/.config/dolphin-hds/prefs.json."""
+"""User preferences, stored as JSON in ~/.config/vietsemi-hdl-studio/prefs.json."""
 from __future__ import annotations
 
 import getpass
@@ -63,11 +63,21 @@ class Prefs:
 
     @staticmethod
     def path() -> str:
-        """Location of the preference file: $XDG_CONFIG_HOME/dolphin-hds/prefs.json
-        (~/.config/dolphin-hds/prefs.json when the variable is not set; tests set it).
+        """Location of the preference file: $XDG_CONFIG_HOME/vietsemi-hdl-studio/prefs.json
+        (~/.config/vietsemi-hdl-studio/prefs.json when the variable is not set; tests set it).
+        A configuration folder left by the prototype (dolphin-hds) is renamed to the new one the
+        first time, so preferences, session and autosaved work carry over.
         """
+        from version import APP_ID, LEGACY_APP_ID
         base = os.environ.get('XDG_CONFIG_HOME') or os.path.join(os.path.expanduser('~'), '.config')
-        return os.path.join(base, 'dolphin-hds', 'prefs.json')
+        folder = os.path.join(base, APP_ID)
+        legacy = os.path.join(base, LEGACY_APP_ID)
+        if not os.path.exists(folder) and os.path.isdir(legacy):
+            try:
+                os.rename(legacy, folder)
+            except OSError:
+                pass                     # cannot move it (in use, read-only): start fresh
+        return os.path.join(folder, 'prefs.json')
 
     @classmethod
     def load(cls) -> 'Prefs':

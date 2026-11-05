@@ -1,5 +1,5 @@
-"""Check that Dolphin HDS draws a state diagram where HDS does: for every object of an HDS
-.sm file, the rectangle Dolphin draws is compared with the one saved in the file (HDS units,
+"""Check that HDL Studio draws a state diagram where HDS does: for every object of an HDS
+.sm file, the rectangle HDL Studio draws is compared with the one saved in the file (HDS units,
 75 per scene unit). Objects off by more than TOL HDS units are listed.
 
     python tests/hds_compare/fsm_geometry.py path/to/fsm.sm [...]
@@ -46,7 +46,7 @@ def compare(path):
         got = [item_rect.left() * 75, item_rect.top() * 75, item_rect.right() * 75, item_rect.bottom() * 75]
         err = max(abs(a - b) for a, b in zip(want, got))
         if err > TOL:
-            bad.append(f'{what}: HDS {[round(v) for v in want]} Dolphin {[round(v) for v in got]} (off {err:.0f})')
+            bad.append(f'{what}: HDS {[round(v) for v in want]} HDL Studio {[round(v) for v in got]} (off {err:.0f})')
 
     for node in doc.walk():
         nid = f'n{node.label}' if node.label is not None else None

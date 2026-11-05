@@ -6,7 +6,7 @@ Text, User Properties); right, the page of the category of the selected objects:
   States       Number of selected states, Name, State Type, Shape..., outgoing transitions
                Style IF / CASE, Implicit loopback, Entry / State / Exit Actions tabs;
   Transitions  Number of selected transitions, IF Condition, Priority, Actions.
-Fields Dolphin HDS does not keep yet (state type, shape, style, loopback, the Visible boxes)
+Fields HDL Studio does not keep yet (state type, shape, style, loopback, the Visible boxes)
 are shown as HDS has them but disabled. OK applies and closes, Apply applies, Cancel closes.
 """
 from __future__ import annotations
@@ -33,7 +33,7 @@ def _text_box() -> QPlainTextEdit:
 
 
 def _visible() -> QCheckBox:
-    """HDS's "Visible" box: shown checked, not editable yet (Dolphin always shows the text)."""
+    """HDS's "Visible" box: shown checked, not editable yet (HDL Studio always shows the text)."""
     c = QCheckBox('Visible')
     c.setChecked(True)
     c.setEnabled(False)

@@ -1,5 +1,5 @@
 """Options > Main... : the legacy Main Settings dialog (General, Text, Diagrams, Tables,
-Checks, Save, User Variables). Settings Dolphin HDS uses are live; the others are shown
+Checks, Save, User Variables). Settings HDL Studio uses are live; the others are shown
 as in the legacy tool but greyed, so the layout matches."""
 from __future__ import annotations
 
@@ -10,11 +10,11 @@ from PySide6.QtWidgets import (QCheckBox, QComboBox, QDialog, QDialogButtonBox, 
 
 from prefs import Prefs
 
-NOT_USED = 'Not used by Dolphin HDS yet'
+NOT_USED = 'Not used by HDL Studio yet'
 
 
 def _off(*widgets):
-    """Disable widgets that show an HDS setting Dolphin does not use yet (with a tool tip saying so)."""
+    """Disable widgets that show an HDS setting HDL Studio does not use yet (with a tool tip saying so)."""
     for w in widgets:
         w.setEnabled(False)
         w.setToolTip(NOT_USED)
@@ -96,7 +96,7 @@ class MainSettingsDialog(QDialog):
         # ---- Text
         w = QWidget(); v = QVBoxLayout(w)
         box = QGroupBox('Text Editor Commands'); g = QGridLayout(box)
-        self.editor = QComboBox(); self.editor.addItems(['Dolphin HDS editor', 'External command'])
+        self.editor = QComboBox(); self.editor.addItems(['HDL Studio editor', 'External command'])
         self.editor.setCurrentIndex(1 if p.use_external_editor else 0)
         self.editor_cmd = QLineEdit(p.external_editor)
         self.editor_cmd.setToolTip('{file} and {line} are replaced, e.g. gvim +{line} {file}')
@@ -107,7 +107,7 @@ class MainSettingsDialog(QDialog):
         g.addWidget(QLabel('Text file extensions'), 2, 0)
         self.extensions = QLineEdit(p.text_extensions); g.addWidget(self.extensions, 2, 1)
         g.addWidget(QLabel('HDL Viewer (Used to display text read-only):'), 3, 0, 1, 2)
-        viewer = QComboBox(); viewer.addItem('Dolphin HDS editor'); g.addWidget(viewer, 4, 0, 1, 2)
+        viewer = QComboBox(); viewer.addItem('HDL Studio editor'); g.addWidget(viewer, 4, 0, 1, 2)
         v.addWidget(box)
         box = QGroupBox('Printing'); b = QVBoxLayout(box)
         b.addWidget(QLabel('Text File Print Command:'))

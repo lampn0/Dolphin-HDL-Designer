@@ -1,23 +1,23 @@
 """Working on one state diagram with both tools, through fsm.sm and symbol.sb: an edit saved
 by one tool must be what the other reads, keeps and generates.
 
-    python tests/hds_sync/sync_fsm.py [case ...]       # Dolphin -> HDS cases (all by default)
+    python tests/hds_sync/sync_fsm.py [case ...]       # HDL Studio -> HDS cases (all by default)
 
-Direction Dolphin -> HDS. A scratch HDS project is made in tests/hds_sync/work/d2h
+Direction HDL Studio -> HDS. A scratch HDS project is made in tests/hds_sync/work/d2h
 (library sync_lib), one design unit per case and base diagram: a copy of fsm.sm + symbol.sb of
 uart_tx (examples/uart_hds, made in HDS 2021.1) and of gc_control_fsm (the real project).
 For each unit:
 
-  1. Dolphin: the diagram is opened in the editor window, the case's edit is made on it and
+  1. HDL Studio: the diagram is opened in the editor window, the case's edit is made on it and
      it is saved the way File > Save does (hds.export_sm with the scene's geometry). The
      file read again must have the edit ("dolphin saved").
   2. HDS 2021.1, batch (hds_batch.py), on every unit in one run: open the view, save it,
      generate its HDL, check the symbol's ports.
   3. Checks:
        hds open / save / generate   no Tcl error, no error in HDS's log for the unit
-       hds keeps the edit           the file HDS saved, read by Dolphin, is the diagram Dolphin
+       hds keeps the edit           the file HDS saved, read by HDL Studio, is the diagram HDL Studio
                                     saved (states, transitions, texts, signals, ...)
-       same HDL                     HDS's generated HDL = Dolphin's for the file Dolphin saved
+       same HDL                     HDS's generated HDL = HDL Studio's for the file HDL Studio saved
                                     (from "// State encoding" on; the header has dates)
        symbol ports                 the ports in symbol.sb = the ports of the diagram
 
@@ -91,10 +91,10 @@ def snap_diff(a: dict, b: dict) -> list[str]:
         if a[k] != b[k]:
             if isinstance(a[k], list):
                 sa, sb = set(map(repr, a[k])), set(map(repr, b[k]))
-                out += [f'{k} only Dolphin: {x}' for x in sorted(sa - sb)][:6]
+                out += [f'{k} only HDL Studio: {x}' for x in sorted(sa - sb)][:6]
                 out += [f'{k} only HDS:     {x}' for x in sorted(sb - sa)][:6]
             else:
-                out.append(f'{k}: Dolphin {a[k]!r} / HDS {b[k]!r}'[:400])
+                out.append(f'{k}: HDL Studio {a[k]!r} / HDS {b[k]!r}'[:400])
     return out
 
 
@@ -185,7 +185,7 @@ def e_machine_props(win):
     """Case: change statement blocks, directives and machine properties."""
     v, m = win.view, win.machine
     v.concurrent_statements = (v.concurrent_statements.rstrip() + '\n' if v.concurrent_statements.strip() else '') \
-        + '// concurrent statement added by Dolphin'
+        + '// concurrent statement added by HDL Studio'
     _i, o = _names(v)
     v.global_pre_actions = f'{o} = {o};'
     v.end_module_directives = '// end of module (dolphin)'
@@ -214,7 +214,7 @@ def e_change_ports(win):
         vec.bounds = f'[{hi + 8}:0]'
         done.append(f'{vec.name} {vec.bounds}')
     out = next(s for s in v.signals if s.mode == 'output')
-    out.comment = 'comment changed by Dolphin'
+    out.comment = 'comment changed by HDL Studio'
     done.append(f'{out.name} comment')
     texts = ' '.join([v.concurrent_statements, v.state_register_statements, v.global_pre_actions,
                       v.global_post_actions] + [t.cond + ' ' + t.actions for t in m.transitions] +
@@ -309,7 +309,7 @@ def unit_log(log: str, unit: str) -> list[str]:
 
 
 def main() -> int:
-    """Run the selected cases: edit and save in Dolphin, then open / check / save / generate in
+    """Run the selected cases: edit and save in HDL Studio, then open / check / save / generate in
     batch HDS and compare. Returns the exit code.
     """
     names = [a for a in sys.argv[1:] if a in CASES] or list(CASES)
@@ -329,7 +329,7 @@ def main() -> int:
         rows.append((unit, check, ok, detail))
         print(('PASS' if ok else 'FAIL'), f'{unit:22} {check:24} {detail[:150]}', flush=True)
 
-    # 1. Dolphin edits and saves
+    # 1. HDL Studio edits and saves
     for unit in units:
         case = unit.split('_', 1)[1]
         path = os.path.join(root, LIB, 'hds', unit, 'fsm.sm')
@@ -351,7 +351,7 @@ def main() -> int:
         text, _ = generate_text(saved)
         expect[unit] = (snap(saved), text, path)
         dol_ports[unit] = symbol_ports(os.path.join(os.path.dirname(path), 'symbol.sb'))
-        shutil.copy(path, os.path.join(root, unit + '.dolphin.sm'))     # what Dolphin wrote
+        shutil.copy(path, os.path.join(root, unit + '.dolphin.sm'))     # what HDL Studio wrote
         shutil.copy(os.path.join(os.path.dirname(path), 'symbol.sb'), os.path.join(root, unit + '.dolphin.sb'))
 
     # 2. HDS reads, saves, generates
@@ -406,7 +406,7 @@ def main() -> int:
         else:
             hds_text = open(gen[0], encoding='utf-8', errors='replace').read()
             a, b = hdl_from_mark(hds_text, False), hdl_from_mark(dtext, False)
-            diff = list(difflib.unified_diff(a.split('\n'), b.split('\n'), f'HDS {unit}', f'Dolphin {unit}',
+            diff = list(difflib.unified_diff(a.split('\n'), b.split('\n'), f'HDS {unit}', f'HDL Studio {unit}',
                                              lineterm='', n=2))
             if diff:
                 with open(os.path.join(RESULTS, f'd2h_{unit}.diff'), 'w', encoding='utf-8', newline='\n') as f:
@@ -421,7 +421,7 @@ def main() -> int:
                 f'only diagram {sorted(set(ports) - set(sp))}, only symbol {sorted(set(sp) - set(ports))}')
 
     with open(os.path.join(RESULTS, 'd2h.md'), 'w', encoding='utf-8', newline='\n') as f:
-        f.write('# Dolphin -> HDS: state diagrams through fsm.sm / symbol.sb\n\n| Unit | Check | Result | Detail |\n'
+        f.write('# HDL Studio -> HDS: state diagrams through fsm.sm / symbol.sb\n\n| Unit | Check | Result | Detail |\n'
                 '|---|---|---|---|\n')
         for unit, check, ok, detail in rows:
             f.write(f'| {unit} | {check} | {"PASS" if ok else "FAIL"} | {detail.replace("|", "/")[:300]} |\n')

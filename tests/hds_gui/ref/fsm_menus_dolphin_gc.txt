@@ -144,9 +144,9 @@ Add
     Bitmap...  (disabled)
   Title Block  (disabled)
 Simulate
-  (not available in Dolphin HDS)  (disabled)
+  (not available in HDL Studio)  (disabled)
 Animation
-  (not available in Dolphin HDS)  (disabled)
+  (not available in HDL Studio)  (disabled)
 Options
   Main...  (disabled)
   Verilog...  (disabled)
@@ -162,4 +162,4 @@ Window
   Component Browser  (disabled)
 Help
   Keyboard Shortcuts  (disabled)
-  About Dolphin HDS
+  About HDL Studio

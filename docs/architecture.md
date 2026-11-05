@@ -1,4 +1,4 @@
-# HDLDesigner architecture
+# Vietsemi HDL Studio architecture
 
 How the code is organised and how data flows through it. Read this before changing the code;
 the docstrings of each module go into the details.
@@ -110,9 +110,9 @@ autosave offers to recover it.
 
 | What | Where |
 |---|---|
-| User preferences (Options dialogs) | `~/.config/dolphin-hds/prefs.json` (`$XDG_CONFIG_HOME` if set) |
+| User preferences (Options dialogs) | `~/.config/vietsemi-hdl-studio/prefs.json` (`$XDG_CONFIG_HOME` if set) |
 | Session, autosave, caches | the same folder: `session.json`, `autosave/`, `hdl_cache.pickle`, `hier_cache_v2.json` |
-| Zoom / scroll per diagram | Qt settings ("Dolphin" / "HDS") |
+| Zoom / scroll per diagram | Qt settings ("Vietsemi" / "HDL Studio") |
 | Project and libraries | the `.hdp` file |
 | Default views of a library | `<lib>/hds/.dhds_default_views.json` |
 | Generation records | `<lib>/hds/<unit>/.dhds_gen.json` |

@@ -1,4 +1,4 @@
-"""Render a region of an HDS state diagram as Dolphin HDS draws it, to compare with HDS.
+"""Render a region of an HDS state diagram as HDL Studio draws it, to compare with HDS.
 
     python tests/hds_gui/dolphin_fsm_region.py fsm.sm name x0 y0 x1 y1 [px_per_unit]
 

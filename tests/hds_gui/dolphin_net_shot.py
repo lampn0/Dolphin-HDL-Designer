@@ -1,4 +1,4 @@
-"""Draw sig0 in an empty Dolphin block diagram like the HDS check (F7, click, double-click) and
+"""Draw sig0 in an empty HDL Studio block diagram like the HDS check (F7, click, double-click) and
 save the selected and unselected looks, at the HDS 100% scale, for comparison with HDS."""
 import os, sys
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))), 'src'))

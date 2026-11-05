@@ -1,4 +1,4 @@
-# Đối chiếu Dolphin HDS với *HDS Graphical Editors User Manual* (v2024.2)
+# Đối chiếu HDL Studio với *HDS Graphical Editors User Manual* (v2024.2)
 
 Nguồn: `HDS_2024.2/docs/pdfdocs/hds_graph_ed_user.pdf` (cùng nội dung với bản HTML `htmldocs/hds_graph_ed_user`).
 Thứ tự giữ nguyên như mục lục của user guide để kiểm tra lần lượt.

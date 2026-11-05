@@ -1,5 +1,5 @@
 """Make the HDS reference: generate the HDL of a real project with HDS itself (batch mode on the
-Linux server where HDS is installed), and bring it here to compare Dolphin HDS against.
+Linux server where HDS is installed), and bring it here to compare HDL Studio against.
 
     python tests/hds_compare/hds_reference.py
 

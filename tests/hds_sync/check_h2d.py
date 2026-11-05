@@ -1,4 +1,4 @@
-"""HDS -> Dolphin: a state diagram edited and saved in HDS's own window, read by Dolphin.
+"""HDS -> HDL Studio: a state diagram edited and saved in HDS's own window, read by HDL Studio.
 
     python tests/hds_sync/check_h2d.py tx|gc <unit folder saved by HDS> <original fsm.sm>
 
@@ -9,14 +9,14 @@ The edits made in HDS 2021.1 (by hand or with hds_do.py) on uart_tx, checked her
   in the Signals Table.
 
 Checks:
-  dolphin reads the edits     every edit above is in Dolphin's reading of the file
+  dolphin reads the edits     every edit above is in HDL Studio's reading of the file
   nothing else changed        the rest of the diagram is as in the original
   symbol ports                symbol.sb (written by HDS) has the diagram's ports
   same HDL                    HDS's generated HDL (batch HDS on a copy of the saved files) =
-                              Dolphin's for the same file (leading spaces apart)
-  dolphin save unchanged      the file opened in Dolphin's editor and saved without an edit is
-                              byte for byte HDS's file (Dolphin does not damage it)
-  dolphin edit, HDS reads     a further edit in Dolphin (s0's actions) saved; batch HDS opens
+                              HDL Studio's for the same file (leading spaces apart)
+  dolphin save unchanged      the file opened in HDL Studio's editor and saved without an edit is
+                              byte for byte HDS's file (HDL Studio does not damage it)
+  dolphin edit, HDS reads     a further edit in HDL Studio (s0's actions) saved; batch HDS opens
                               it, checks its integrity, generates
 """
 from __future__ import annotations
@@ -137,7 +137,7 @@ def main() -> int:
     sp = symbol_ports(os.path.join(root, LIB, 'hds', U, 'symbol.sb'))
     check('symbol ports', sp == ports, f'only diagram {sorted(set(ports) - set(sp))}, only symbol {sorted(set(sp) - set(ports))}')
 
-    # Dolphin: open in the editor, save without an edit; then make one edit and save
+    # HDL Studio: open in the editor, save without an edit; then make one edit and save
     dpath = os.path.join(root, LIB, 'hds', D, 'fsm.sm')
     before = open(dpath, 'rb').read()
     win = MainWindow()
@@ -146,7 +146,7 @@ def main() -> int:
     QTest.qWait(200)
     warn = export_sm(win.view, dpath, dpath, win.scene.hds_geometry)
     check('dolphin save unchanged', open(dpath, 'rb').read() == before and not warn, warn)
-    target = win.machine.states[-1]                 # a further edit made in Dolphin
+    target = win.machine.states[-1]                 # a further edit made in HDL Studio
     target.in_actions = (target.in_actions.rstrip() + '\n' if target.in_actions.strip() else '') + '// dolphin'
     win.scene.load(win.view, win.machine)
     warn = export_sm(win.view, dpath, dpath, win.scene.hds_geometry)
@@ -155,7 +155,7 @@ def main() -> int:
     check('dolphin edit saved', not warn and import_sm(dpath).machines[0].state_by_name(target.name).in_actions.strip()
           .endswith('// dolphin'), warn)
 
-    # HDS batch: generate both; integrity of Dolphin's edit
+    # HDS batch: generate both; integrity of HDL Studio's edit
     cmds = []
     for unit in (U, D):
         cmds += [f'set d_{unit} [::HdsApi::openGraphicalView {LIB} {unit} fsm.sm]',
@@ -172,7 +172,7 @@ def main() -> int:
             continue
         mine, _ = generate_text(import_sm(os.path.join(root, LIB, 'hds', unit, 'fsm.sm'), library=LIB, unit=unit))
         x, y = hdl_from_mark(open(gen, encoding='utf-8').read(), False), hdl_from_mark(mine, False)
-        diff = list(difflib.unified_diff(x.split('\n'), y.split('\n'), 'HDS', 'Dolphin', lineterm='', n=2))
+        diff = list(difflib.unified_diff(x.split('\n'), y.split('\n'), 'HDS', 'HDL Studio', lineterm='', n=2))
         out = os.path.join(HERE, 'results', f'h2d_{unit}.diff')
         os.makedirs(os.path.dirname(out), exist_ok=True)
         if diff:

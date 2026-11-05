@@ -185,7 +185,7 @@ Tasks
     Through Components  (disabled)
     Through Design Root  (disabled)
 Simulate
-  (not available in Dolphin HDS)  (disabled)
+  (not available in HDL Studio)  (disabled)
 Add
   Block	Ctrl+F3  (disabled)
   Component...	F3
@@ -230,4 +230,4 @@ Window
   Component Browser  (disabled)
 Help
   Keyboard Shortcuts  (disabled)
-  About Dolphin HDS
+  About HDL Studio
