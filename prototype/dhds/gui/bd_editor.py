@@ -10,14 +10,16 @@ import os
 import re
 
 from PySide6.QtCore import QEvent, QLineF, QPoint, QPointF, QRectF, QSize, Qt, QTimer, Signal
-from PySide6.QtGui import (QAction, QActionGroup, QBrush, QColor, QFont, QKeySequence, QPainter, QPainterPath,
-                           QPainterPathStroker, QPen, QPolygonF)
+from PySide6.QtGui import (QAction, QActionGroup, QBrush, QColor, QFont, QFontMetricsF, QKeySequence, QPainter,
+                           QPainterPath, QPainterPathStroker, QPen, QPolygonF)
 from PySide6.QtWidgets import (QApplication, QGraphicsSimpleTextItem, QComboBox, QDialog, QDialogButtonBox, QDockWidget, QFormLayout, QGraphicsItem,
                                QGraphicsPathItem, QGraphicsScene, QHBoxLayout, QInputDialog, QLabel, QLineEdit,
                                QListWidget, QListWidgetItem, QMainWindow, QMenu, QMessageBox, QPlainTextEdit, QPushButton,
-                               QSplitter, QTableWidget, QTableWidgetItem, QTabWidget, QToolBar, QVBoxLayout, QWidget)
+                               QSplitter, QTableWidget, QTableWidgetItem, QTabWidget, QToolBar, QTreeWidget,
+                               QTreeWidgetItem, QVBoxLayout, QWidget)
 
-from ..bd_model import BdEmbedded, BdFrame, BdInstance, BdPin, BdPortIo, BdWire, BlockDiagram
+from ..bd_model import (NAME_LINE_H, BdEmbedded, BdFrame, BdInstance, BdJunction, BdPin, BdPortIo, BdWire,
+                        BlockDiagram)
 from ..codegen.bd_codegen import generate_bd
 from ..model import LANGUAGES, Parameter, Signal as Sig
 from .bd_dialogs import PortIoPropertiesDialog, port_label
@@ -30,11 +32,18 @@ from .toolbars import BD_KEYS, BD_TOOLBAR, build_toolbar
 from .tables import ParametersTable, SignalsTable
 from .undo import SnapshotUndo, load_view_state, save_view_state
 
-MONO = QFont('Courier New', 8)
-BOLD = QFont('Courier New', 8, QFont.Bold)
+# Diagram text. HDS diagrams name "courier", which HDS on Windows draws with its default font
+# (Arial, hds_user_prefs defaultFont); Dolphin draws it the same way. (The names are older than
+# that choice: MONO is not monospaced.)
+DIAGRAM_FONT = 'Arial'
+MONO = QFont(DIAGRAM_FONT, 8)
+BOLD = QFont(DIAGRAM_FONT, 8, QFont.Bold)
 LANG_LABEL = {'systemverilog': 'SystemVerilog', 'verilog': 'Verilog 2005'}
 BLOCK_FILL = QColor(0, 230, 0)
 EMB_FILL = QColor(255, 255, 160)
+# net drawing tools: Add Signal / Bus, and their "with a Port" variants
+NET_MODES = ('wire', 'bus', 'wire_port', 'bus_port')
+EMB_NEW_SIZE = (8000 / 75, 10000 / 75)   # a new embedded block: 8000 x 10000 HDS units, as HDS 2021.1 adds it
 SEL_PEN = QPen(QColor(255, 120, 0), 2.5)
 PIN_GRAB = 6.0
 from .diagram import GRID      # the legacy grid (1000 database units), shared with the state diagram
@@ -136,14 +145,53 @@ class InstanceItem(_Movable):
     def __init__(self, scene, obj):
         super().__init__(scene, obj)
         self._pin_drag = None       # (pin, press position, original x, y) while moving a port
+        self._text_drag = None      # (press position, original text position) while moving the name text
+
+    def name_lines(self) -> list[tuple[str, str, QRectF]]:
+        """Visible name lines ('library', 'unit', 'instance') and their boxes in item coordinates.
+        The lines keep their slots: a hidden library line leaves its place empty, as in HDS."""
+        o = self.obj
+        fm = QFontMetricsF(BOLD)
+        lines = [('library', o.library, o.show_library), ('unit', o.unit, True), ('instance', o.name, o.show_instance)]
+        out = []
+        if o.text_pos is None:                  # not placed yet: centred at the top of the body
+            y = 3
+            for kind, text, shown in lines:
+                if shown:
+                    w = fm.horizontalAdvance(text)
+                    out.append((kind, text, QRectF((o.w - w) / 2, y, w, NAME_LINE_H)))
+                    y += 10
+            return out
+        x, y = o.text_pos
+        for k, (kind, text, shown) in enumerate(lines):
+            if shown:
+                out.append((kind, text, QRectF(x, y + k * NAME_LINE_H, fm.horizontalAdvance(text) + 2, NAME_LINE_H)))
+        return out
+
+    def name_rect(self) -> QRectF:
+        r = QRectF()
+        for _, _, box in self.name_lines():
+            r = r.united(box)
+        return r
+
+    def name_at(self, scene_pos: QPointF) -> str:
+        """Which name line is under a scene position ('' for none)."""
+        pos = self.mapFromScene(scene_pos)
+        return next((kind for kind, _, r in self.name_lines() if r.adjusted(-1, -1, 1, 1).contains(pos)), '')
 
     def boundingRect(self):
         extra = len(self.obj.params) * 10 + 4 if self.obj.show_params else 0
-        return QRectF(-90, -6, self.obj.w + 180, self.obj.h + 12 + extra)
+        return QRectF(-90, -6, self.obj.w + 180, self.obj.h + 12 + extra).united(self.name_rect().adjusted(-2, -2, 2, 2))
 
     def shape(self):
+        """Clickable area: the body, the name text and a grab square around each port.
+        The rectangles overlap (the name usually lies inside the body, a port square half over
+        the edge). With Qt's default odd-even fill an overlap counts twice and becomes a hole,
+        so clicks on the name text hit nothing: the winding fill makes the overlaps solid."""
         p = QPainterPath()
+        p.setFillRule(Qt.WindingFill)
         p.addRect(QRectF(0, 0, self.obj.w, self.obj.h))
+        p.addRect(self.name_rect())             # the name text can be dragged outside the body
         for pin in self.obj.pins:               # the ports stick out of the body: make them clickable
             p.addRect(QRectF(pin.x - self.obj.x - PIN_GRAB, pin.y - self.obj.y - PIN_GRAB, 2 * PIN_GRAB, 2 * PIN_GRAB))
         return p
@@ -175,6 +223,25 @@ class InstanceItem(_Movable):
     def mousePressEvent(self, e):
         sc = self.bd_scene
         pin = self.pin_at(e.scenePos()) if e.button() == Qt.LeftButton and sc.mode == 'select' else None
+        kind = self.name_at(e.scenePos()) if pin is None and e.button() == Qt.LeftButton and sc.mode == 'select' else ''
+        if kind:
+            # A press on a name line (library / component / instance) selects that line only,
+            # like HDS: the body stays unselected and a drag moves the name text, not the component.
+            sc.clearSelection()
+            sc.select_text(self, kind)
+            if not sc.readonly:
+                # The drag works on text_pos, the top-left of the library line slot. A component
+                # that was never placed has no text_pos yet: start from where it is drawn now
+                # (centred lines), so the text does not jump when the drag begins.
+                if self.obj.text_pos is None:
+                    first_kind, _, r = self.name_lines()[0]
+                    slot = ['library', 'unit', 'instance'].index(first_kind)
+                    start = [r.x(), r.y() - slot * NAME_LINE_H]
+                else:
+                    start = list(self.obj.text_pos)
+                self._text_drag = (e.scenePos(), start)
+            e.accept()
+            return
         if pin is None:
             return super().mousePressEvent(e)
         sc.clearSelection()
@@ -184,6 +251,13 @@ class InstanceItem(_Movable):
         e.accept()
 
     def mouseMoveEvent(self, e):
+        if self._text_drag is not None:
+            p0, (x0, y0) = self._text_drag
+            d = e.scenePos() - p0
+            self.prepareGeometryChange()
+            self.obj.text_pos = [_snap(x0 + d.x()), _snap(y0 + d.y())]
+            self.update()
+            return
         if self._pin_drag is None:
             return super().mouseMoveEvent(e)
         pin, p0, x0, y0, side0 = self._pin_drag
@@ -193,6 +267,13 @@ class InstanceItem(_Movable):
         self.bd_scene.move_pin(self, pin, *self.pin_target(pin, x0, y0, side0, d.x(), d.y()))
 
     def mouseReleaseEvent(self, e):
+        if self._text_drag is not None:
+            moved = e.scenePos() != self._text_drag[0]
+            self._text_drag = None
+            self.update()
+            if moved:
+                self.bd_scene.changed_model.emit()
+            return
         if self._pin_drag is None:
             return super().mouseReleaseEvent(e)
         pin, _, x0, y0, _ = self._pin_drag
@@ -204,17 +285,32 @@ class InstanceItem(_Movable):
         o = self.obj
         _fill(p, QRectF(0, 0, o.w, o.h), o.fg, o.bg, o.fill_style)
         p.setBrush(Qt.NoBrush)
-        p.setPen(SEL_PEN if self.isSelected() else _pen(o.line_color, 1.5 * o.line_width, o.line_style))
+        p.setPen(_pen(o.line_color, 1.5 * o.line_width, o.line_style))
         p.drawRect(QRectF(0, 0, o.w, o.h))
+        if self.isSelected():
+            # as HDS 2021.1: a selected component keeps its outline and gets corner handles
+            p.save()
+            p.setPen(Qt.NoPen); p.setBrush(Qt.black)
+            hr = HANDLE_PX * _px(p) / 2
+            for c in (QPointF(0, 0), QPointF(o.w, 0), QPointF(0, o.h), QPointF(o.w, o.h)):
+                p.drawRect(QRectF(c.x() - hr, c.y() - hr, 2 * hr, 2 * hr))
+            p.restore()
         p.setFont(BOLD)
         p.setPen(Qt.black)
-        y = 3
-        if o.show_library:
-            p.drawText(QRectF(0, y, o.w, 11), Qt.AlignHCenter, o.library)
-            y += 10
-        p.drawText(QRectF(0, y, o.w, 11), Qt.AlignHCenter, o.unit)
-        if o.show_instance:
-            p.drawText(QRectF(0, y + 10, o.w, 11), Qt.AlignHCenter, o.name)
+        for _, text, r in self.name_lines():
+            p.drawText(r, Qt.AlignLeft | Qt.AlignVCenter, text)
+        sel = self.bd_scene.selected_text
+        if sel is not None and sel[0] == o.id:
+            # The selected name line: red box with a small handle at each corner, as in HDS.
+            box = next((r for kind, _, r in self.name_lines() if kind == sel[1]), None)
+            if box is not None:
+                px = _px(p)                     # one screen pixel in item units (handles keep their size)
+                p.setPen(QPen(QColor(220, 0, 0), 0)); p.setBrush(Qt.NoBrush)
+                p.drawRect(box)
+                h = 2 * px
+                for c in (box.topLeft(), box.topRight(), box.bottomLeft(), box.bottomRight()):
+                    p.drawRect(QRectF(c.x() - h, c.y() - h, 2 * h, 2 * h))
+            p.setPen(Qt.black)
         p.setFont(MONO)
         fm = p.fontMetrics()
         if o.show_params and o.params:
@@ -226,31 +322,47 @@ class InstanceItem(_Movable):
             lx, ly = pin.x - o.x, pin.y - o.y
             p.setPen(QPen(QColor(0, 100, 0), 1))
             p.setBrush(QColor(0, 160, 0) if pin.net else QColor(255, 255, 255))
+            if pin.clock:                       # clock input: edge triangle inside the body
+                ex = min(max(lx, 0), o.w); ey = min(max(ly, 0), o.h)
+                ix, iy = {'left': (1, 0), 'right': (-1, 0), 'top': (0, 1), 'bottom': (0, -1)}[pin.side]
+                p.save(); p.setPen(QPen(QColor(0, 128, 0), 1)); p.setBrush(QColor(0, 255, 0))
+                p.drawPolygon(QPolygonF([QPointF(ex - 5 * iy, ey - 5 * ix), QPointF(ex + 10 * ix, ey + 10 * iy),
+                                         QPointF(ex + 5 * iy, ey + 5 * ix)]))
+                p.restore()
             if pin.side in ('left', 'right'):
                 inward = 1 if pin.side == 'left' else -1
-                d = inward if (pin.mode == 'input') == (pin.side == 'left') else -inward
+                d = inward if pin.mode == 'input' else -inward      # inputs point into the body
+                if pin.arrow in ('left', 'right'):
+                    d = 1 if pin.arrow == 'right' else -1
                 t = PIN_HALF
                 p.drawPolygon(QPolygonF([QPointF(lx - t * d, ly - t), QPointF(lx + t * d, ly),
                                          QPointF(lx - t * d, ly + t)]))
                 p.setPen(Qt.black)
                 text = port_label(pin.name, 'wire', False, pin.bounds, '', o)
+                gap = 10 if pin.clock else 0    # after the clock mark
+                # as HDS saves component ports: the name starts 1000 units (one grid step) past
+                # the triangle, its baseline 300 units below the port's line
+                g, base = GRID, 300 / 75
                 if pin.side == 'left':
-                    p.drawText(QPointF(lx + t + 2, ly + 3), text)
+                    p.drawText(QPointF(lx + t + g + gap, ly + base), text)
                 else:
-                    p.drawText(QPointF(lx - t - 2 - fm.horizontalAdvance(text), ly + 3), text)
+                    p.drawText(QPointF(lx - t - g - gap - fm.horizontalAdvance(text), ly + base), text)
             else:
                 inward = 1 if pin.side == 'top' else -1
                 d = inward if pin.mode == 'input' else -inward
+                if pin.arrow in ('up', 'down'):
+                    d = 1 if pin.arrow == 'down' else -1
                 t = PIN_HALF
                 p.drawPolygon(QPolygonF([QPointF(lx - t, ly - t * d), QPointF(lx, ly + t * d),
                                          QPointF(lx + t, ly - t * d)]))
                 p.setPen(Qt.black)
                 text = port_label(pin.name, 'wire', False, pin.bounds, '', o)
-                p.save()                        # names of top/bottom ports run along the port, inside the body
-                if pin.side == 'top':
-                    p.translate(lx + 3, ly + 7); p.rotate(90)
-                else:
-                    p.translate(lx + 3, ly - 7); p.rotate(-90)
+                p.save()                        # names of top/bottom ports read upward inside the body (legacy "ro 270")
+                if pin.side == 'top':                           # ends at the port
+                    p.translate(lx + 3, ly + 7 + fm.horizontalAdvance(text))
+                else:                                           # starts at the port
+                    p.translate(lx + 3, ly - 7)
+                p.rotate(-90)
                 p.drawText(QPointF(0, 0), text)
                 p.restore()
         sel = self.bd_scene.selected_pin
@@ -340,6 +452,7 @@ class FrameItem(_Movable):
 
     def shape(self):
         path = QPainterPath()
+        path.setFillRule(Qt.WindingFill)        # a handle over the title must not punch a hole in it
         if self.obj.show_label:
             path.addRect(self._title_rect())
         if self.isSelected():
@@ -378,27 +491,378 @@ class FrameItem(_Movable):
         self.bd_scene.frame_edit_requested.emit(self.obj)
 
 
-class EmbeddedItem(_Movable):
-    kind = 'emb'
+def expand_title_text(text: str, bd: BlockDiagram) -> str:
+    """Variables of the legacy title block, as shown on the diagram."""
+    import getpass
+    from datetime import datetime
+    now = datetime.now()
+    values = {'%project_name': bd.library, '%library': bd.library, '%unit': bd.unit, '%view': bd.view,
+              '%language': 'SystemVerilog' if bd.language == 'systemverilog' else 'Verilog',
+              '%user': getpass.getuser(), '%month': now.strftime('%b'), '%year': now.strftime('%Y'),
+              '%dd': now.strftime('%d'), '%date': now.strftime('%d %b %Y'), '%time': now.strftime('%H:%M:%S')}
+    for k in sorted(values, key=len, reverse=True):     # longest first: %date before %dd
+        text = text.replace(k, values[k])
+    return text
+
+
+class CommentItem(_Movable):
+    """Box of the title block; boxes of one group move together."""
+    kind = 'cmt'
 
     def boundingRect(self):
-        return QRectF(0, 0, max(self.obj.w, 60), max(self.obj.h, 30))
+        return QRectF(0, 0, self.obj.w, self.obj.h)
 
     def paint(self, p: QPainter, opt, widget=None):
-        r = self.boundingRect()
-        p.setBrush(EMB_FILL)
-        p.setPen(SEL_PEN if self.isSelected() else QPen(QColor(0, 0, 120), 1.2))
-        p.drawRect(r)
-        p.setFont(BOLD)
-        p.setPen(Qt.black)
-        p.drawText(QPointF(4, 11), f'{self.obj.name}  ({self.obj.number})')
+        o = self.obj
+        if o.fill:
+            p.fillRect(self.boundingRect(), QColor(o.fill))
+        p.setPen(SEL_PEN if self.isSelected() else QPen(QColor(0, 0, 0), 0))
+        p.setBrush(Qt.NoBrush)
+        p.drawRect(self.boundingRect())
         p.setFont(MONO)
-        y = 25
-        for line in self.obj.text.strip('\n').split('\n'):
-            if y > r.height() - 3:
-                break
-            p.drawText(QPointF(8, y), line)
-            y += 10
+        p.setPen(QColor(o.color))
+        p.drawText(self.boundingRect().adjusted(3, 0, -2, 0), Qt.AlignLeft | Qt.AlignVCenter,
+                   expand_title_text(o.text, self.bd_scene.bd))
+
+
+class JunctionItem(_Movable):
+    """Dot where nets meet; the nets attached to it follow when it moves."""
+    kind = 'jct'
+
+    def boundingRect(self):
+        return QRectF(-4, -4, 8, 8)
+
+    def paint(self, p: QPainter, opt, widget=None):
+        p.setPen(Qt.NoPen)
+        p.setBrush(QColor(220, 0, 0) if self.isSelected() else Qt.black)
+        p.drawEllipse(QPointF(0, 0), 3, 3)
+
+
+class EmbeddedItem(_Movable):
+    """Embedded HDL text block. Nets attach to it at points on its edge (wire end reference
+    "emb:<id>"), not to ports. A press on one of those points drags the net end along the
+    edge, as a component port is dragged; a press anywhere else moves the whole block."""
+    kind = 'emb'
+
+    def __init__(self, scene, obj):
+        super().__init__(scene, obj)
+        # while a net end is dragged: (wire, 'start' | 'end', press position, end x, end y, side,
+        # the net's points at the press)
+        self._end_drag = None
+        # while the Text view is moved or resized: ('move' | 'resize', press position, box at press)
+        self._box_drag = None
+
+    def _size(self) -> tuple[float, float]:
+        return max(self.obj.w, 60), max(self.obj.h, 30)
+
+    def text_rect(self) -> QRectF | None:
+        """The white Text view box in item coordinates; None while the block has no view.
+        A block saved before text boxes existed but holding code shows it inside the frame."""
+        o = self.obj
+        if o.text_box:
+            return QRectF(*o.text_box)
+        if o.text.strip():
+            w, h = self._size()
+            return QRectF(13, 13, w - 26, h - 26)
+        return None
+
+    def boundingRect(self):
+        # painted area: the body, the net triangles outside its edges, the name above it and
+        # the text box (which may lie outside the body)
+        w, h = self._size()
+        m = 2 * PIN_HALF + 2
+        r = QRectF(-m, -16, w + 2 * m, h + 16 + m)
+        box = self.text_rect()
+        return r.united(box.adjusted(-2, -2, 2, 2)) if box is not None else r
+
+    def shape(self):
+        # clickable area: the body plus the grab distance of the net ends on its edge, and the
+        # text box (winding fill: where the two overlap must not become a hole)
+        w, h = self._size()
+        p = QPainterPath()
+        p.setFillRule(Qt.WindingFill)
+        p.addRect(QRectF(-PIN_GRAB, -PIN_GRAB, w + 2 * PIN_GRAB, h + 2 * PIN_GRAB))
+        box = self.text_rect()
+        if box is not None:
+            p.addRect(box)
+            # the resize handle on the box corner reaches outside the box: grab all of it
+            # (the same tolerance as _box_handle)
+            t = (HANDLE_PX / 2 + 2) * _scene_px(self.scene()) if self.scene() is not None else 4
+            c = box.bottomRight()
+            p.addRect(QRectF(c.x() - t, c.y() - t, 2 * t, 2 * t))
+        return p
+
+    def in_text(self, scene_pos: QPointF) -> bool:
+        """Whether a scene position is on the white Text view (else on the yellow block)."""
+        box = self.text_rect()
+        return box is not None and box.contains(self.mapFromScene(scene_pos))
+
+    def body(self) -> QRectF:
+        """The block in scene coordinates."""
+        w, h = self._size()
+        return QRectF(self.obj.x, self.obj.y, w, h)
+
+    def end_at(self, pos: QPointF) -> tuple[BdWire, str] | None:
+        """The net end attached to this block under a scene position (within the port grab
+        distance), as (wire, 'start' | 'end'); None when there is none."""
+        for w, which in self.bd_scene._attached(f'emb:{self.obj.id}'):
+            if not w.points:
+                continue
+            x, y = w.points[0] if which == 'start' else w.points[-1]
+            if abs(x - pos.x()) <= PIN_GRAB and abs(y - pos.y()) <= PIN_GRAB:
+                return w, which
+        return None
+
+    def edge_side(self, x: float, y: float) -> str:
+        """Edge of the block nearest to a point: left, right, top or bottom."""
+        b = self.body()
+        dist = {'left': abs(x - b.left()), 'right': abs(x - b.right()),
+                'top': abs(y - b.top()), 'bottom': abs(y - b.bottom())}
+        return min(dist, key=dist.get)
+
+    def edge_point(self, x: float, y: float) -> tuple[float, float, str]:
+        """The point of the block edge nearest to (x, y), on the grid along the edge and kept
+        off the corners, with its side: where a net drawn to (x, y) attaches."""
+        b = self.body()
+        side = self.edge_side(x, y)
+        ax = min(max(_snap(x), b.left() + 4), b.right() - 4)
+        ay = min(max(_snap(y), b.top() + 4), b.bottom() - 4)
+        return {'left': (b.left(), ay), 'right': (b.right(), ay), 'top': (ax, b.top()),
+                'bottom': (ax, b.bottom())}[side] + (side,)
+
+    def edge_target(self, x0: float, y0: float, side0: str, dx: float, dy: float) -> tuple[float, float, str]:
+        """Where a net end dragged by (dx, dy) from (x0, y0) lands: on the grid, on the nearest
+        edge of the block (it may turn a corner), keeping its distance off the edge (legacy
+        diagrams sometimes end a net a little outside the block)."""
+        b = self.body()
+        gap = {'left': b.left() - x0, 'right': x0 - b.right(), 'top': b.top() - y0, 'bottom': y0 - b.bottom()}[side0]
+        px, py = _snap(x0 + dx), _snap(y0 + dy)
+        # stay off the corners, so the end clearly belongs to one edge
+        inside_x = min(max(px, b.left() + 4), b.right() - 4)
+        inside_y = min(max(py, b.top() + 4), b.bottom() - 4)
+        side = self.edge_side(px, py)
+        if side == 'left':
+            return b.left() - gap, inside_y, side
+        if side == 'right':
+            return b.right() + gap, inside_y, side
+        if side == 'top':
+            return inside_x, b.top() - gap, side
+        return inside_x, b.bottom() + gap, side
+
+    def _box_handle(self, scene_pos: QPointF) -> bool:
+        """Whether a scene position is on the resize handle (bottom-right corner) of the Text view."""
+        box = self.text_rect()
+        if box is None:
+            return False
+        p = self.mapFromScene(scene_pos)
+        tol = (HANDLE_PX / 2 + 2) * _scene_px(self.scene())
+        return abs(p.x() - box.right()) <= tol and abs(p.y() - box.bottom()) <= tol
+
+    def mousePressEvent(self, e):
+        sc = self.bd_scene
+        hit = self.end_at(e.scenePos()) if e.button() == Qt.LeftButton and sc.mode == 'select' else None
+        if hit is None and e.button() == Qt.LeftButton and sc.mode == 'select' and                 (self.in_text(e.scenePos()) or self._box_handle(e.scenePos())):
+            # The Text view is anchored to the block but moves and resizes on its own (HDS):
+            # a drag on it moves the text box, a drag on its corner handle resizes it.
+            sc.clearSelection(); self.setSelected(True)
+            if not sc.readonly:
+                box = self.text_rect()
+                kind = 'resize' if self._box_handle(e.scenePos()) else 'move'
+                self._box_drag = (kind, e.scenePos(), [box.x(), box.y(), box.width(), box.height()])
+            e.accept()
+            return
+        if hit is None:
+            return super().mousePressEvent(e)   # not on a net end: select / move the block
+        w, which = hit
+        sc.clearSelection()
+        if w.id in sc.wire_items:
+            sc.wire_items[w.id].setSelected(True)   # the dragged net shows as selected
+        if not sc.readonly:
+            x, y = w.points[0] if which == 'start' else w.points[-1]
+            self._end_drag = (w, which, e.scenePos(), x, y, self.edge_side(x, y), [list(q) for q in w.points])
+        e.accept()
+
+    def mouseMoveEvent(self, e):
+        if getattr(self, '_box_drag', None) is not None:
+            kind, p0, (bx, by, bw, bh) = self._box_drag
+            d = e.scenePos() - p0
+            self.prepareGeometryChange()
+            if kind == 'move':
+                self.obj.text_box = [_snap(bx + d.x()), _snap(by + d.y()), bw, bh]
+            else:                               # resize, never smaller than 4 x 2 grid squares
+                self.obj.text_box = [bx, by, max(4 * GRID, _snap(bw + d.x())), max(2 * GRID, _snap(bh + d.y()))]
+            self.update()
+            return
+        if self._end_drag is None:
+            return super().mouseMoveEvent(e)
+        w, which, p0, x0, y0, side0, orig = self._end_drag
+        d = e.scenePos() - p0
+        if e.modifiers() & Qt.ShiftModifier:    # Shift: only along one axis
+            d = QPointF(d.x(), 0) if abs(d.x()) >= abs(d.y()) else QPointF(0, d.y())
+        x, y, side = self.edge_target(x0, y0, side0, d.x(), d.y())
+        # Re-route the net from the new end point the same way a component port does: straight
+        # out of the edge, then right angles to the rest of the net. _leave_edge only needs the
+        # point and the side, so a throw-away BdPin carries them. Always start from the points the
+        # net had at the press: routing the already re-routed net again would pile up stubs.
+        w.points = [list(q) for q in orig]
+        _leave_edge(w, which, BdPin('', x=x, y=y, side=side))
+        sc = self.bd_scene
+        if w.id in sc.wire_items:
+            sc.wire_items[w.id].refresh()
+
+    def mouseReleaseEvent(self, e):
+        if getattr(self, '_box_drag', None) is not None:
+            moved = e.scenePos() != self._box_drag[1]
+            self._box_drag = None
+            if moved:
+                self.bd_scene.changed_model.emit()
+            return
+        if self._end_drag is None:
+            return super().mouseReleaseEvent(e)
+        w, which, p0, x0, y0, _, orig = self._end_drag
+        self._end_drag = None
+        end = w.points[0] if which == 'start' else w.points[-1]
+        moved = bool(w.points) and (end[0], end[1]) != (x0, y0)
+        # dropped back where it started: keep the net exactly as it was (no re-routed stub)
+        w.points = _simplify(w.points) if moved else orig
+        if w.id in self.bd_scene.wire_items:
+            self.bd_scene.wire_items[w.id].refresh()
+        if moved:
+            self.bd_scene.changed_model.emit()
+
+    def paint(self, p: QPainter, opt, widget=None):
+        o = self.obj
+        r = QRectF(0, 0, *self._size())
+        if getattr(self, 'ghost', False):
+            # the Add Embedded Block preview, as HDS draws it: the outline only
+            p.setBrush(Qt.NoBrush); p.setPen(QPen(Qt.black, 0))
+            p.drawRect(r)
+            return
+        # the yellow block (where nets attach)
+        p.setBrush(EMB_FILL)
+        p.setPen(SEL_PEN if self.isSelected() else QPen(QColor(0, 0, 128), 1.2))
+        p.drawRect(r)
+        box = self.text_rect()
+        if box is None or not box.contains(r.center()):
+            # No view inside the block (none yet, or the Text view beside it): name and number
+            # in the middle of the block, as HDS shows a new embedded block.
+            p.setFont(BOLD); p.setPen(Qt.black)
+            p.drawText(r, Qt.AlignCenter, f'{o.name}\n{o.number}')
+        elif o.show_name:
+            p.setFont(BOLD); p.setPen(Qt.black)
+            p.drawText(QPointF(0, -3), o.name)
+        if box is not None:
+            # the Text view: white box with the HDL code, clipped to the box
+            p.setBrush(Qt.white); p.setPen(QPen(QColor(0, 0, 128), 1))
+            p.drawRect(box)
+            if self.isSelected():
+                # selected: the anchor (dashed red line from the block to its Text view, when the
+                # view is outside the block) and the resize handle of the view
+                if not r.intersects(box):
+                    p.setPen(QPen(QColor(220, 0, 0), 0, Qt.DashLine))
+                    p.drawLine(r.center(), box.center())
+                hs = HANDLE_PX * _px(p) / 2
+                p.setPen(Qt.NoPen); p.setBrush(Qt.black)
+                p.drawRect(QRectF(box.right() - hs, box.bottom() - hs, 2 * hs, 2 * hs))
+                p.setBrush(Qt.white); p.setPen(QPen(QColor(0, 0, 128), 1))
+            p.save()
+            p.setClipRect(box)
+            p.setFont(MONO); p.setPen(Qt.black)
+            y = box.top() + 10
+            for line in o.text.strip('\n').split('\n'):
+                if y > box.bottom() + 10:
+                    break
+                p.drawText(QPointF(box.left() + 3, y), line)
+                y += 10
+            p.restore()
+        if box is None:
+            # no view yet: a small page with a red "?" in the bottom-left corner, where HDS
+            # shows its "no view" icon (Dolphin's own drawing, not the HDS bitmap)
+            icon_r = QRectF(3, r.height() - 16, 10, 13)
+            p.setBrush(Qt.white); p.setPen(QPen(QColor(90, 90, 90), 0))
+            p.drawRect(icon_r)
+            f = QFont(BOLD); f.setPointSizeF(7); p.setFont(f); p.setPen(QColor(220, 0, 0))
+            p.drawText(icon_r, Qt.AlignCenter, '?')
+        self._paint_net_arrows(p)
+
+    def _paint_net_arrows(self, p: QPainter):
+        """A black triangle where each net attaches, like a component port: its base on the
+        block edge, pointing out for an output, in for an input. As in HDS, the direction is
+        the way the net was drawn: a net that starts on the block leaves it (output), a net
+        that ends on it enters it (input). HDS stores no ports for an embedded block."""
+        t = PIN_HALF
+        p.setPen(Qt.NoPen); p.setBrush(Qt.black)
+        b = self.body()
+        for w, which in self.bd_scene._attached(f'emb:{self.obj.id}'):
+            if not w.points:
+                continue
+            x, y = w.points[0] if which == 'start' else w.points[-1]
+            side = self.edge_side(x, y)
+            # the point on the edge, in item coordinates, and the outward unit vector
+            ex = (b.left() if side == 'left' else b.right() if side == 'right' else x) - self.obj.x
+            ey = (b.top() if side == 'top' else b.bottom() if side == 'bottom' else y) - self.obj.y
+            ox, oy = {'left': (-1, 0), 'right': (1, 0), 'top': (0, -1), 'bottom': (0, 1)}[side]
+            # output: base on the edge, tip 2t outside; input: base 2t outside, tip on the edge
+            base, tip = (0.0, 2 * t) if which == 'start' else (2 * t, 0.0)
+            bx, by = ex + ox * base, ey + oy * base
+            p.drawPolygon(QPolygonF([QPointF(bx - oy * t, by - ox * t), QPointF(ex + ox * tip, ey + oy * tip),
+                                     QPointF(bx + oy * t, by + ox * t)]))
+
+
+class _InlineText(QPlainTextEdit):
+    """Multi-line in-place editor (HDL text of an embedded block). Leaving it keeps the text
+    (committed), Esc drops the edit; either way it closes itself."""
+    committed = Signal(str)
+
+    def __init__(self, text: str, parent):
+        super().__init__(parent)
+        self.setPlainText(text)
+        self.setFont(QFont('Courier New', 9))
+        self.setLineWrapMode(QPlainTextEdit.NoWrap)
+        self.setStyleSheet('QPlainTextEdit { border: 1px solid #000080; background: white; }')
+        self._done = False
+
+    def _close(self, keep: bool):
+        if self._done:
+            return
+        self._done = True
+        text = self.toPlainText()
+        self.hide(); self.deleteLater()        # hidden at once, deleted by the event loop
+        if keep:
+            self.committed.emit(text)
+
+    def keyPressEvent(self, e):
+        if e.key() == Qt.Key_Escape:
+            self._close(False)
+            return
+        super().keyPressEvent(e)
+
+    def focusOutEvent(self, e):
+        super().focusOutEvent(e)
+        self._close(True)
+
+
+class EmbeddedViewDialog(QDialog):
+    """"Create Embedded View" (HDS): which view an empty embedded block gets. Dolphin HDS writes
+    the HDL text itself, so only Text is offered; the graphical kinds are shown greyed."""
+
+    def __init__(self, block_name: str, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle('Create Embedded View')
+        lay = QVBoxLayout(self)
+        lay.addWidget(QLabel(f'Create a new view for:     Embedded Block: {block_name}'))
+        lay.addWidget(QLabel('Select type of view to create:'))
+        from PySide6.QtWidgets import QRadioButton
+        for k, text in enumerate(('Text', 'State Diagram', 'Flow Chart', 'ASM', 'Truth Table')):
+            r = QRadioButton(text)
+            r.setChecked(k == 0)
+            r.setEnabled(k == 0)
+            if k:
+                r.setToolTip('Not supported: an embedded block is written as Verilog text')
+            lay.addWidget(r)
+        bb = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
+        bb.accepted.connect(self.accept); bb.rejected.connect(self.reject)
+        lay.addWidget(bb)
 
 
 class PortIoItem(_Movable):
@@ -415,19 +879,42 @@ class PortIoItem(_Movable):
 
     def paint(self, p: QPainter, opt, widget=None):
         o = self.obj
-        p.setBrush(QColor(255, 120, 0) if self.isSelected() else
-                   QBrush(QColor(o.fg), _FILL[o.fill_style]) if o.fill_style in _FILL else Qt.NoBrush)
-        p.setPen(Qt.NoPen if o.line_color == '#000000' and o.fill_style == 'solid'
-                 else _pen(o.line_color, o.line_width, o.line_style))
+        ghost = getattr(self, 'ghost', False)
+        if ghost:
+            # the Add Port preview, as HDS draws it: an outline (white inside), no name
+            p.setBrush(Qt.white)
+            p.setPen(QPen(Qt.black, 0))
+        else:
+            p.setBrush(QBrush(QColor(o.fg), _FILL[o.fill_style]) if o.fill_style in _FILL else Qt.NoBrush)
+            p.setPen(Qt.NoPen if o.line_color == '#000000' and o.fill_style == 'solid'
+                     else _pen(o.line_color, o.line_width, o.line_style))
         e, h = PORT_EDGE, 0.375 * GRID
         side = self.bd_scene.port_side(o)           # the net is on this side: the stub points to it
-        body_l, body_r = (-e, e / 2) if side > 0 else (-e / 2, e)
-        p.drawPolygon(QPolygonF([QPointF(body_l, -h), QPointF(body_r - h, -h), QPointF(body_r, 0),
-                                 QPointF(body_r - h, h), QPointF(body_l, h)]))
+        # The body takes the half away from the net plus a quarter; the stub the rest. As in HDS
+        # the point shows the signal flow: an input points towards its net (into the diagram),
+        # an output away from it, an inout both ways.
+        lo, hi = sorted((-e * side, e / 2 * side))
+        if o.mode == 'inout':
+            shape = [QPointF(lo, 0), QPointF(lo + h, -h), QPointF(hi - h, -h), QPointF(hi, 0),
+                     QPointF(hi - h, h), QPointF(lo + h, h)]
+        elif (side if o.mode == 'input' else -side) > 0:
+            shape = [QPointF(lo, -h), QPointF(hi - h, -h), QPointF(hi, 0), QPointF(hi - h, h), QPointF(lo, h)]
+        else:
+            shape = [QPointF(hi, -h), QPointF(lo + h, -h), QPointF(lo, 0), QPointF(lo + h, h), QPointF(hi, h)]
+        p.drawPolygon(QPolygonF(shape))
         stub = QPen(QColor(o.line_color), 1)
         stub.setCosmetic(True)
         p.setPen(stub)
         p.drawLine(QPointF(e / 2 * side, 0), QPointF(e * side, 0))
+        if self.isSelected():
+            # as HDS: a selected port keeps its colour and gets small handles at its corners
+            box = QPolygonF(shape).boundingRect()
+            p.setPen(Qt.NoPen); p.setBrush(Qt.black)
+            r = HANDLE_PX * _px(p) / 2
+            for c in (box.topLeft(), box.topRight(), box.bottomLeft(), box.bottomRight()):
+                p.drawRect(QRectF(c.x() - r, c.y() - r, 2 * r, 2 * r))
+        if ghost:
+            return
         sig = next((s for s in self.bd_scene.bd.signals if s.name == o.name), None)
         text = port_label(o.name, sig.type if sig else 'wire', bool(sig and sig.signed), sig.bounds if sig else '',
                           sig.delay if sig else '', dict(text_name=o.show_text, text_type=o.text_type,
@@ -472,16 +959,39 @@ class WireItem(QGraphicsPathItem):
             for x, y in pts[1:]:
                 path.lineTo(x, y)
         self.setPath(path)
-        self.setToolTip(self.obj.net)
+        self.setToolTip(self.obj.text)
+        # an embedded block draws the direction triangle at this net's end: repaint it too
+        for ref in (self.obj.start, self.obj.end):
+            if ref.startswith('emb:') and self.scene() is not None:
+                owner = self.bd_scene.owner_of(ref)
+                if owner is not None:
+                    owner.update()
+
+    def label_rect(self) -> QRectF:
+        """Box of the net name as drawn (empty when hidden). Horizontal names sit on their
+        baseline; vertical ones (legacy "ro 270") read upward from it, glyphs left of it."""
+        if not self.obj.show_text or not self.obj.points:
+            return QRectF()
+        fm = QFontMetricsF(MONO)
+        width = fm.horizontalAdvance(self.obj.text)
+        pos = self.label_pos(width)
+        if self.is_label_vertical():
+            return QRectF(pos.x() - fm.ascent(), pos.y() - width, fm.height(), width)
+        return QRectF(pos.x(), pos.y() - fm.ascent(), width, fm.height())
 
     def shape(self):
+        # clickable: an 8-unit band along the net, plus its name, so a double-click on the
+        # name edits the net (winding fill: where the two overlap must not become a hole)
         s = QPainterPathStroker()
         s.setWidth(8)
-        return s.createStroke(self.path())
+        path = s.createStroke(self.path())
+        path.setFillRule(Qt.WindingFill)
+        path.addRect(self.label_rect())
+        return path
 
     def boundingRect(self):
         m = max(10.0, HANDLE_PX * _scene_px(self.scene()))
-        return super().boundingRect().adjusted(-120, -m, 120, m)
+        return super().boundingRect().adjusted(-120, -m, 120, m).united(self.label_rect())
 
     def paint(self, p: QPainter, opt, widget=None):
         bus = self.bd_scene.is_bus(self.obj.net)
@@ -506,8 +1016,29 @@ class WireItem(QGraphicsPathItem):
                 p.drawEllipse(QPointF(*end), 3, 3)
         if self.obj.show_text:
             p.setPen(Qt.black)
-            p.drawText(self.label_pos(p.fontMetrics().horizontalAdvance(self.obj.net)), self.obj.net)
+            pos = self.label_pos(p.fontMetrics().horizontalAdvance(self.obj.text))
+            if self.is_label_vertical():
+                p.save()                        # reads upward from the baseline origin, as the legacy editor
+                p.translate(pos); p.rotate(-90)
+                p.drawText(QPointF(0, 0), self.obj.text)
+                p.restore()
+            else:
+                p.drawText(pos, self.obj.text)
 
+        if self.bd_scene.selected_label == self.obj.id and self.obj.show_text:
+            # As in HDS 2021.1, the name selected on its own (a click on the name, not on the
+            # net) gets a box with corner handles and a red leader to the start of the net,
+            # the point its position is kept relative to. A selected net shows no box.
+            box = self.label_rect()
+            if not box.isEmpty():
+                p.setPen(QPen(QColor(0, 0, 0), 0)); p.setBrush(Qt.NoBrush)
+                p.drawRect(box)
+                p.setPen(Qt.NoPen); p.setBrush(Qt.black)
+                r = HANDLE_PX * _px(p) / 4
+                for c in (box.topLeft(), box.topRight(), box.bottomLeft(), box.bottomRight()):
+                    p.drawRect(QRectF(c.x() - r, c.y() - r, 2 * r, 2 * r))
+                p.setPen(QPen(QColor(220, 0, 0), 0))
+                p.drawLine(box.bottomLeft(), QPointF(*pts[0]))
         if self.isSelected():
             # route point handles (black squares, as in the legacy editor)
             p.setPen(Qt.NoPen)
@@ -521,17 +1052,42 @@ class WireItem(QGraphicsPathItem):
             self.setZValue(6 if value else 1)   # a selected net's handles win over objects under them
         return super().itemChange(change, value)
 
+    def _midway(self) -> tuple[list[float], list[float], float]:
+        """The segment holding the point half way along the net, and that point's distance
+        from the segment's first point."""
+        pts = self.obj.points
+        if len(pts) < 2:
+            return pts[0], pts[0], 0.0
+        lengths = [abs(b[0] - a[0]) + abs(b[1] - a[1]) for a, b in zip(pts, pts[1:])]
+        half = sum(lengths) / 2
+        for (a, b), n in zip(zip(pts, pts[1:]), lengths):
+            if half <= n:
+                return a, b, half
+            half -= n
+        return pts[-2], pts[-1], lengths[-1]
+
+    def is_label_vertical(self) -> bool:
+        """The name runs upward along a vertical segment: as stored for a placed name (legacy
+        "ro 270"), else when the middle segment of the net is vertical (HDS aligns the name
+        with the net)."""
+        if self.obj.label is not None:
+            return self.obj.label_vertical
+        a, b, _ = self._midway()
+        return abs(a[0] - b[0]) < 0.01 and abs(a[1] - b[1]) > 0.01
+
     def label_pos(self, text_w: float) -> QPointF:
-        """Baseline of the net name: stored offset, else next to a dangling end, else near the start."""
+        """Baseline origin of the net name: the stored offset from the first point, else, as
+        HDS places a new net's name, centred half way along the net, just above a horizontal
+        segment or just left of a vertical one (reading upward)."""
         pts = self.obj.points
         if self.obj.label is not None:
             return QPointF(pts[0][0] + self.obj.label[0], pts[0][1] + self.obj.label[1])
-        for end, ref, nxt in ((pts[0], self.obj.start, pts[1] if len(pts) > 1 else pts[0]),
-                              (pts[-1], self.obj.end, pts[-2] if len(pts) > 1 else pts[-1])):
-            if not ref:
-                return QPointF(end[0] + (4 if end[0] < nxt[0] else -4 - text_w), end[1] - 3)
-        a, b = pts[0], pts[1] if len(pts) > 1 else pts[0]
-        return QPointF(min(a[0], b[0]) + 8, a[1] - 3)
+        a, b, d = self._midway()
+        if abs(a[0] - b[0]) < 0.01 and abs(a[1] - b[1]) > 0.01:          # vertical
+            y = a[1] + (d if b[1] > a[1] else -d)
+            return QPointF(a[0] - 3, y + text_w / 2)
+        x = a[0] + (d if b[0] >= a[0] else -d)
+        return QPointF(x - text_w / 2, a[1] - 3)
 
     # dragging --------------------------------------------------------------------
     def _handle_at(self, pos: QPointF) -> int | None:
@@ -562,6 +1118,22 @@ class WireItem(QGraphicsPathItem):
             return
         pos = e.scenePos()
         k = self._handle_at(pos)
+        # The name sits just above the net, so its box overlaps the line: a press on the line
+        # itself is for the net, only a press on the name away from the line drags the name.
+        on_line = any(QLineF(QPointF(*a), QPointF(*b)).length() > 1e-6 and
+                      _dist_to_segment(pos, QPointF(*a), QPointF(*b)) <= 2.5
+                      for a, b in zip(self.obj.points, self.obj.points[1:]))
+        if k is None and not on_line and self.label_rect().contains(pos):
+            # a press on the net name drags the name only (stored relative to the first point;
+            # a name never placed starts from where it is drawn now)
+            lp = self.label_pos(QFontMetricsF(MONO).horizontalAdvance(self.obj.text))
+            first = self.obj.points[0]
+            self.obj.label_vertical = self.is_label_vertical()    # keep the orientation it is drawn with
+            self._drag = ('label', None, [lp.x() - first[0], lp.y() - first[1]], pos)
+            # as HDS, the name is selected on its own: the net itself is not
+            self.bd_scene.clearSelection()
+            self.bd_scene.select_label(self.obj.id)
+            return
         if k is not None:
             kind = 'point'
         elif e.modifiers() & Qt.AltModifier:
@@ -578,11 +1150,16 @@ class WireItem(QGraphicsPathItem):
         if e.modifiers() & Qt.ShiftModifier:       # constrain to horizontal or vertical
             dx, dy = (dx, 0.0) if abs(dx) >= abs(dy) else (0.0, dy)
         w = self.obj
+        if kind == 'label':                         # orig is the name offset at the press
+            self.prepareGeometryChange()
+            w.label = [orig[0] + dx, orig[1] + dy]
+            self.update()
+            return
         if kind == 'point':
             pts = [list(q) for q in orig]
             ref = w.start if k == 0 else w.end if k == len(pts) - 1 else ''
             if ref:
-                self._move_attached_end(ref, k, dx, dy)
+                self._move_attached_end(ref, k, dx, dy, orig)
                 return
             pts[k] = [_snap(orig[k][0] + dx), _snap(orig[k][1] + dy)]
             w.points = pts
@@ -596,10 +1173,21 @@ class WireItem(QGraphicsPathItem):
                 for owner, pin, x0, y0, side0 in ends:
                     self.bd_scene.move_pin(owner, pin, *owner.pin_target(pin, x0, y0, side0, dx, dy), carry=True)
             else:
-                w.points = [[x + dx, y + dy] for x, y in orig]       # PortIOs and connectors only
-                for ref in (w.start, w.end):
+                # No component port on the net: the whole net moves by (dx, dy). What is at
+                # each end decides what happens there:
+                #   PortIO              - carried along (it belongs to this net only);
+                #   embedded block      - stays put: the end slides along the block's edge, as on
+                #                         a component port (moving the block would pull the
+                #                         other nets of the block off their places);
+                #   nothing (connector) - just moves with the net.
+                w.points = [[x + dx, y + dy] for x, y in orig]
+                for which, ref in (('start', w.start), ('end', w.end)):
                     owner = self.bd_scene.owner_of(ref) if ref else None
-                    if owner is not None:
+                    if isinstance(owner, EmbeddedItem):
+                        x0, y0 = orig[0] if which == 'start' else orig[-1]
+                        x, y, side = owner.edge_target(x0, y0, owner.edge_side(x0, y0), dx, dy)
+                        _leave_edge(w, which, BdPin('', x=x, y=y, side=side))
+                    elif owner is not None:
                         ox, oy = self._pio_origin(owner)
                         self.bd_scene.following = True
                         try:
@@ -608,11 +1196,24 @@ class WireItem(QGraphicsPathItem):
                             self.bd_scene.following = False
         self.refresh()
 
-    def _move_attached_end(self, ref: str, k: int, dx: float, dy: float):
-        """Dragging the end of a net that sits on a component port or a PortIO moves that port."""
+    def _move_attached_end(self, ref: str, k: int, dx: float, dy: float, orig: list[list[float]]):
+        """Dragging the end handle of a net that is attached to something:
+          component port - moves that port along the component edge (its nets follow);
+          embedded block - slides the net end along the block edge; the block stays;
+          PortIO         - moves the PortIO (its nets follow).
+        orig is the net's points at the press: the end is re-routed from them on every move,
+        so repeated moves do not pile up route stubs."""
         sc = self.bd_scene
         owner = sc.owner_of(ref)
         if owner is None:
+            return
+        if isinstance(owner, EmbeddedItem):
+            which = 'start' if k == 0 else 'end'
+            x0, y0 = orig[k]
+            x, y, side = owner.edge_target(x0, y0, owner.edge_side(x0, y0), dx, dy)
+            self.obj.points = [list(q) for q in orig]
+            _leave_edge(self.obj, which, BdPin('', x=x, y=y, side=side))
+            self.refresh()
             return
         if self._end_origin is None:
             pin = next((q for q in owner.obj.pins if f'pin:{owner.obj.id}:{q.name}' == ref), None) \
@@ -643,6 +1244,10 @@ class WireItem(QGraphicsPathItem):
         self._net_ends = None
         self._pio_start = {}
         super().mouseReleaseEvent(e)
+        if drag is not None and drag[0] == 'label':
+            if self.obj.label != drag[2]:
+                self.bd_scene.changed_model.emit()
+            return
         if drag is None or self.obj.points == drag[2]:
             return
         self.obj.points = _simplify(self.obj.points)
@@ -663,18 +1268,24 @@ class BdScene(QGraphicsScene):
     edit_net_requested = Signal(str, QPointF)      # in-place edit of a net name at a scene position
     port_dropped = Signal(object)                  # a port was moved (may land on a net end)
     frame_edit_requested = Signal(object)          # double-click on a frame title
+    component_dropped = Signal(str, str, QPointF)  # library, unit, drop point (Component Browser)
     end_dropped = Signal(object)                   # a dangling net end was moved (may land on a pin/port)
     place_requested = Signal(QPointF)
     context_requested = Signal(object, object, QPointF)     # item (or None), screen pos, scene pos
 
     def __init__(self, parent=None):
         super().__init__(parent)
-        self.setBackgroundBrush(QColor(252, 252, 252))
+        self.setBackgroundBrush(QColor(255, 255, 255))      # HDS canvas: pure white
         self.bd = BlockDiagram()
         self.highlight = ''          # net drawn highlighted
         self.following = False       # True while objects are carried along by a move
         self.group: set = set()      # objects moved together with a frame
         self.selected_pin: tuple[str, str] | None = None   # (instance id, port) selected on a component
+        # (instance id, 'library' | 'unit' | 'instance'): one name line of a component, selected on its own
+        self.selected_text: tuple[str, str] | None = None
+        self.selected_label: str | None = None      # wire id whose name is selected on its own
+        self._ghost: tuple[str, QGraphicsItem] | None = None    # placement preview (kind, item)
+        self.ghost_instance: BdInstance | None = None   # the component being added, for its preview
         self.route_mode = ROUTE_MODES[0]     # routing of the nets of a dragged PortIO ('z' changes it)
         self._routing: dict[str, tuple[BdWire, str, BdPortIo]] = {}
         self._hint = None
@@ -688,6 +1299,7 @@ class BdScene(QGraphicsScene):
 
     # building ------------------------------------------------------------------
     def load(self, bd: BlockDiagram):
+        self._ghost = None                      # clear() below deletes the preview item too
         self.clear()
         self._hint = None
         self._routing = {}
@@ -705,6 +1317,10 @@ class BdScene(QGraphicsScene):
             self._add(PortIoItem(self, pio))
         for fr in bd.frames:
             self._add(FrameItem(self, fr))
+        for c in bd.comments:
+            self._add(CommentItem(self, c))
+        for j in bd.junctions:
+            self._add(JunctionItem(self, j))
         self._attach_port_ends()
         self.setSceneRect(self.itemsBoundingRect().adjusted(-600, -600, 600, 600))
 
@@ -718,6 +1334,10 @@ class BdScene(QGraphicsScene):
         self.wire_items[w.id] = it
 
     def is_bus(self, net: str) -> bool:
+        """Drawn as a bus (thick): as set by Change Style, else when the net has bounds."""
+        style = self.bd.net_styles.get(net)
+        if style:
+            return style == 'bus'
         return any(s.name == net and s.bounds for s in self.bd.signals)
 
     # geometry helpers ------------------------------------------------------------
@@ -808,6 +1428,23 @@ class BdScene(QGraphicsScene):
             w.points = [[x + dx, y + dy] for x, y in w.points]
             if w.id in self.wire_items:
                 self.wire_items[w.id].refresh()
+
+    def select_label(self, wire_id: str | None):
+        """Select the name of one net on its own (or none), as HDS does on a click on the name."""
+        old, self.selected_label = self.selected_label, wire_id
+        for wid in {old, wire_id} - {None}:
+            if wid in self.wire_items:
+                self.wire_items[wid].update()
+
+    def select_text(self, item: 'InstanceItem | None', kind: str = ''):
+        """Select one name line of a component (or none). As in HDS, the line is selected on
+        its own: the component body is not selected, so Delete does not remove the component."""
+        old = self.selected_text
+        self.selected_text = (item.obj.id, kind) if item is not None and kind else None
+        # repaint the component that lost the selection and the one that got it
+        for iid in {old[0] if old else None, self.selected_text[0] if self.selected_text else None} - {None}:
+            if iid in self.items_by_id:
+                self.items_by_id[iid].update()
 
     def select_pin(self, item: 'InstanceItem | None', pin: BdPin | None):
         old = self.selected_pin
@@ -973,6 +1610,17 @@ class BdScene(QGraphicsScene):
             if not self.group:
                 self._move_frame_contents(item, dx, dy)
             return
+        if isinstance(item, CommentItem):
+            if item.obj.group and not self.group:     # the other boxes of the title block follow
+                sibs = [it for it in self.items_by_id.values() if isinstance(it, CommentItem) and it is not item
+                        and it.obj.group == item.obj.group and not it.isSelected()]
+                self.group = set(sibs) | {item}
+                try:
+                    for it in sibs:
+                        it.setPos(it.pos() + QPointF(dx, dy))
+                finally:
+                    self.group = set()
+            return
         moving = lambda it: it.isSelected() or it in self.group
         for w, which in list(self._attached(self._ref_of(item))):
             other = w.end if which == 'start' else w.start
@@ -1004,12 +1652,19 @@ class BdScene(QGraphicsScene):
                 attached = any(True for _ in self._attached(f'pio:{pio.id}'))
                 side = self.port_side(pio) if attached else (1 if pos.x() >= pio.x else -1)
                 return f'pio:{pio.id}', QPointF(*self.port_edge(pio, side)), None, pio
+        # An embedded block takes a net anywhere on it: the end goes to the nearest point of
+        # its edge (on the grid), like a port of a component.
+        for it in self.items_by_id.values():
+            if isinstance(it, EmbeddedItem) and it.body().adjusted(-PIN_GRAB, -PIN_GRAB, PIN_GRAB, PIN_GRAB).contains(pos):
+                x, y, _ = it.edge_point(pos.x(), pos.y())
+                return f'emb:{it.obj.id}', QPointF(x, y), None, None
         return None
 
     # modes -----------------------------------------------------------------------
     def set_mode(self, mode: str):
         self.mode = mode
         self._cancel_wire()
+        self._clear_ghost()
         for v in self.views():
             v.setDragMode(FsmGraphicsView.RubberBandDrag if mode == 'select' else FsmGraphicsView.NoDrag)
             v.viewport().setCursor(Qt.ArrowCursor if mode == 'select' else Qt.CrossCursor)
@@ -1024,28 +1679,39 @@ class BdScene(QGraphicsScene):
     def mousePressEvent(self, e):
         if self.selected_pin is not None and e.button() == Qt.LeftButton:
             self.select_pin(None, None)         # a port click selects it again below
+        if self.selected_text is not None and e.button() == Qt.LeftButton:
+            self.select_text(None)              # a click on a name line selects it again below
+        if self.selected_label is not None and e.button() == Qt.LeftButton:
+            self.select_label(None)             # a click on a net name selects it again below
         if self.mode == 'select' or e.button() != Qt.LeftButton or self.readonly:
             return super().mousePressEvent(e)
         pos = QPointF(_snap(e.scenePos().x()), _snap(e.scenePos().y()))
-        if self.mode in ('component', 'port_in', 'port_out', 'embedded', 'frame', 'frame_if', 'frame_else'):
+        if self.mode in ('component', 'port_in', 'port_out', 'port_inout', 'embedded', 'frame', 'frame_if',
+                         'frame_else'):
             self.place_requested.emit(pos)
             return
-        if self.mode == 'wire':
-            hit = self.pin_at(e.scenePos())
+        if self.mode in NET_MODES:
+            # As in HDS (checked on HDS 2021.1) a net starts on anything: a component port, a
+            # PortIO, an embedded block, an existing net (joined with a dot) or open space.
+            # A later click on one of those objects ends the net there and connects it; a
+            # click in open space only adds a corner and the net goes on; a double-click ends
+            # it in open space (a dangling end).
+            hit = self.pin_at(e.scenePos()) or self.net_at(e.scenePos())
             if self._wire_start is None:
                 if hit is None:
-                    self.message.emit('Start a wire on a component pin or a port')
-                    return
+                    hit = ('', pos, None, None)          # open space: a dangling start
                 self._wire_start = (hit[0], hit[1])
                 self._wire_pts = []
                 self._rubber = QGraphicsPathItem()
-                self._rubber.setPen(QPen(QColor(120, 120, 120), 1, Qt.DashLine))
+                self._rubber.setPen(QPen(QColor(0, 0, 0), 0))   # HDS: a thin solid line
                 self.addItem(self._rubber)
                 return
-            if hit is None:
-                self._wire_pts.append([pos.x(), pos.y()])   # bend point
-                return
-            self.finish_wire(hit)
+            if hit is not None:
+                self.finish_wire(hit)
+            else:
+                last = QPointF(*self._wire_pts[-1]) if self._wire_pts else self._wire_start[1]
+                if QLineF(last, pos).length() > 0.01:    # the 2nd press of a double-click: nothing new
+                    self._wire_pts += self._ortho_leg(pos)
 
     def contextMenuEvent(self, e):
         item = None
@@ -1058,30 +1724,169 @@ class BdScene(QGraphicsScene):
             item.setSelected(True)
         self.context_requested.emit(item, e.screenPos(), e.scenePos())
 
+    def net_at(self, pos: QPointF) -> tuple[str, QPointF, None, None] | None:
+        """An existing net under pos, as a connection point for a new net: ('net:<wire id>',
+        the nearest point of that net on the grid, None, None). The caller joins the new net
+        to it there with a junction dot, and the new net takes its name."""
+        best = None
+        for w in self.bd.wires:
+            for a, b in zip(w.points, w.points[1:]):
+                seg = QLineF(QPointF(*a), QPointF(*b))
+                if seg.length() < 1e-6:
+                    continue
+                t = max(0.0, min(1.0, QPointF.dotProduct(pos - seg.p1(), seg.p2() - seg.p1()) / seg.length() ** 2))
+                q = seg.pointAt(t)
+                d = QLineF(pos, q).length()
+                if d <= 4 and (best is None or d < best[0]):
+                    # snap along the segment only (stay on the net)
+                    q = QPointF(_snap(q.x()), q.y()) if abs(a[1] - b[1]) < 0.01 else QPointF(q.x(), _snap(q.y()))
+                    best = (d, w, q)
+        return (f'net:{best[1].id}', best[2], None, None) if best else None
+
+    def _ortho_leg(self, to: QPointF) -> list[list[float]]:
+        """Corner points from the last point of the net being drawn to `to`, with right angles
+        as HDS draws them: after a horizontal segment the net turns vertical first, and the
+        other way round (the first leg starts horizontal). Returns [[x, y], ...] ending at `to`."""
+        last = QPointF(*self._wire_pts[-1]) if self._wire_pts else self._wire_start[1]
+        if abs(last.x() - to.x()) < 0.01 or abs(last.y() - to.y()) < 0.01:
+            return [[to.x(), to.y()]]
+        prev = QPointF(*self._wire_pts[-2]) if len(self._wire_pts) > 1 else \
+            (self._wire_start[1] if self._wire_pts else None)
+        horizontal_before = prev is not None and abs(prev.y() - last.y()) < 0.01
+        corner = [last.x(), to.y()] if horizontal_before else [to.x(), last.y()]
+        return [corner, [to.x(), to.y()]]
+
     def mouseDoubleClickEvent(self, e):
-        if self.mode == 'wire' and self._wire_start is not None and self.pin_at(e.scenePos()) is None:
-            # double-click in empty space ends the wire with a named net connector
-            pos = QPointF(_snap(e.scenePos().x()), _snap(e.scenePos().y()))
-            if self._wire_pts and self._wire_pts[-1] == [pos.x(), pos.y()]:
-                self._wire_pts.pop()
-            self.finish_wire(('', pos, None, None))
+        if self.mode in NET_MODES:
+            # a double-click ends the net in open space, at the clicked point (a dangling end);
+            # the corner(s) up to it are added here unless its first press already did
+            if self._wire_start is not None:
+                pos = QPointF(_snap(e.scenePos().x()), _snap(e.scenePos().y()))
+                last = QPointF(*self._wire_pts[-1]) if self._wire_pts else self._wire_start[1]
+                if QLineF(last, pos).length() > 0.01:
+                    self._wire_pts += self._ortho_leg(pos)
+                if self._wire_pts:
+                    end = self._wire_pts.pop()
+                    self.finish_wire(('', QPointF(*end), None, None))
+            e.accept()
             return
         if self.mode == 'select' and e.button() == Qt.LeftButton:
             # Qt only gives a double-click to the item that took the first press; nets are
             # edited in place whichever net is under the cursor
             wire = next((it for it in self.items(e.scenePos()) if isinstance(it, WireItem)), None)
             top = next(iter(self.items(e.scenePos())), None)
+            if isinstance(top, PortIoItem):
+                # a port: edit the net it stands for (its name is the net name), at the click
+                self.edit_net_requested.emit(top.obj.name, e.scenePos())
+                return
             if wire is not None and (top is wire or not isinstance(top, _Movable)):
-                self.edit_net_requested.emit(wire.obj.net, e.scenePos())
+                # a net: the edit box goes over the net name, as in HDS (else at the click)
+                pos = e.scenePos()
+                if wire.obj.show_text and wire.obj.points and not wire.is_label_vertical():
+                    pos = wire.label_pos(QFontMetricsF(MONO).horizontalAdvance(wire.obj.net))
+                self.edit_net_requested.emit(wire.obj.net, pos)
                 return
         super().mouseDoubleClickEvent(e)
 
+    # drops from the Component Browser ------------------------------------------------
+    def _component_drop(self, e) -> tuple[str, str] | None:
+        from .component_browser import MIME_TYPE
+        md = e.mimeData()
+        if self.readonly or not md.hasFormat(MIME_TYPE):
+            return None
+        lib, _, unit = bytes(md.data(MIME_TYPE)).decode().partition('/')
+        return (lib, unit) if unit else None
+
+    def dragEnterEvent(self, e):
+        if self._component_drop(e) is not None:
+            e.acceptProposedAction()
+        else:
+            super().dragEnterEvent(e)
+
+    def dragMoveEvent(self, e):
+        if self._component_drop(e) is not None:
+            e.acceptProposedAction()
+        else:
+            super().dragMoveEvent(e)
+
+    def dropEvent(self, e):
+        hit = self._component_drop(e)
+        if hit is None:
+            return super().dropEvent(e)
+        e.acceptProposedAction()
+        self.component_dropped.emit(hit[0], hit[1], QPointF(_snap(e.scenePos().x()), _snap(e.scenePos().y())))
+
+    # placement preview ----------------------------------------------------------------
+    def _update_ghost(self, pos: QPointF):
+        """While adding a port or an embedded block, a faded copy of it follows the cursor (on
+        the grid), as in HDS. It is a real item drawn at low opacity that takes no clicks and is
+        not part of the model; set_mode() removes it."""
+        kind = {'port_in': 'input', 'port_out': 'output', 'port_inout': 'inout', 'embedded': 'emb'}.get(self.mode)
+        if self.mode == 'component' and self.ghost_instance is not None:
+            kind = 'comp'
+        if kind is None or self.readonly:
+            self._clear_ghost()
+            return
+        if self._ghost is None or self._ghost[0] != kind:
+            self._clear_ghost()
+            if kind == 'emb':
+                n = max((e.number for e in self.bd.embedded), default=0) + 1
+                item = EmbeddedItem(self, BdEmbedded('_ghost', f'eb{n}', n, '', 0, 0, *EMB_NEW_SIZE))
+                item.ghost = True                  # drawn as an outline, as HDS shows it
+            elif kind == 'comp':
+                item = InstanceItem(self, self.ghost_instance)
+            else:
+                item = PortIoItem(self, BdPortIo('_ghost', '', kind))
+                item.ghost = True                  # drawn as an outline, as HDS shows it
+            item.setFlags(QGraphicsItem.GraphicsItemFlags())   # not selectable, not movable
+            item.setAcceptedMouseButtons(Qt.NoButton)
+            item.setOpacity(1.0 if kind != 'comp' else 0.35)
+            item.setZValue(20)
+            self.addItem(item)
+            self._ghost = (kind, item)
+        item = self._ghost[1]
+        x, y = self.placement_origin(self.mode, pos)
+        if kind == 'comp':
+            # the instance's ports are stored in scene coordinates: move them with the body
+            for pin in item.obj.pins:
+                pin.x += x - item.obj.x
+                pin.y += y - item.obj.y
+        item.obj.x, item.obj.y = x, y
+        item.setPos(x, y)
+
+    def placement_origin(self, mode: str, cursor: QPointF) -> tuple[float, float]:
+        """Model position (x, y) of a port or embedded block added at the cursor, on the grid,
+        with the cursor where HDS 2021.1 has it: at the tip of a port's stub (where its net
+        attaches), at the bottom-left corner of an embedded block."""
+        cx, cy = _snap(cursor.x()), _snap(cursor.y())
+        if mode in ('port_in', 'port_out', 'port_inout'):
+            # a free port shows its stub on this side (the preview's side); the centre is a
+            # port half-width from the tip
+            pmode = {'port_in': 'input', 'port_out': 'output', 'port_inout': 'inout'}[mode]
+            probe = BdPortIo('_probe', '', pmode, 0.0, 0.0)
+            tip = self.port_edge(probe)
+            return cx - tip[0], cy - tip[1]
+        if mode == 'embedded':
+            return cx, cy - EMB_NEW_SIZE[1]
+        if mode == 'component' and self.ghost_instance is not None:
+            return cx, cy - self.ghost_instance.h          # a dropped component: same corner
+        return cx, cy
+
+    def _clear_ghost(self):
+        if self._ghost is not None:
+            self.removeItem(self._ghost[1])
+            self._ghost = None
+
     def mouseMoveEvent(self, e):
+        self._update_ghost(e.scenePos())
         if self._wire_start is not None and self._rubber is not None:
+            # the net drawn so far, then the right-angled leg that a click would add
             path = QPainterPath(self._wire_start[1])
             for x, y in self._wire_pts:
                 path.lineTo(x, y)
-            path.lineTo(e.scenePos())
+            cur = QPointF(_snap(e.scenePos().x()), _snap(e.scenePos().y()))
+            for x, y in self._ortho_leg(cur):
+                path.lineTo(x, y)
             self._rubber.setPath(path)
         super().mouseMoveEvent(e)
 
@@ -1118,6 +1923,8 @@ class BdScene(QGraphicsScene):
         bd.embedded = [e for e in bd.embedded if e.id not in dead_objs]
         bd.port_ios = [p for p in bd.port_ios if p.id not in dead_objs]
         bd.frames = [f for f in bd.frames if f.id not in dead_objs]
+        bd.comments = [c for c in bd.comments if c.id not in dead_objs]
+        bd.junctions = [j for j in bd.junctions if j.id not in dead_objs]
         # a pin keeps its net only while a wire is still attached to it
         still = {r for w in bd.wires for r in (w.start, w.end)}
         for inst in bd.instances:
@@ -1127,6 +1934,13 @@ class BdScene(QGraphicsScene):
         self.load(bd)
         self.changed_model.emit()
         return True
+
+
+def _dist_to_segment(p: QPointF, a: QPointF, b: QPointF) -> float:
+    """Distance from p to the segment a-b."""
+    seg = QLineF(a, b)
+    t = max(0.0, min(1.0, QPointF.dotProduct(p - a, b - a) / seg.length() ** 2))
+    return QLineF(p, seg.pointAt(t)).length()
 
 
 def _shift_end(w: BdWire, which: str, dx: float, dy: float):
@@ -1421,6 +2235,9 @@ class BdEditorWindow(QMainWindow):
         self._clipboard: list[dict] = []
         self.scene = BdScene(self)
         self.canvas = FsmGraphicsView(self.scene)
+        # moves without a button pressed must reach the scene: the placement preview (faded
+        # port / embedded block under the cursor) follows them
+        self.canvas.viewport().setMouseTracking(True)
         self.signals_tab = SignalsTable()
         self.params_tab = ParametersTable()
         self.code = CodeView()
@@ -1442,30 +2259,54 @@ class BdEditorWindow(QMainWindow):
             self.dir_edits[attr] = w
             f.addRow(label, w)
 
+        # As in HDS the window shows one page at a time (the diagram, the Signal Table, the
+        # Parameters Table, the directives); there is no tab bar, the pages are reached from the
+        # Structure Navigator and the View / Diagram menus.
         self.tabs = QTabWidget()
         self.tabs.addTab(self.canvas, 'Block Diagram')
         self.tabs.addTab(self.signals_tab, 'Signal Table')
         self.tabs.addTab(self.params_tab, 'Parameters Table')
         self.tabs.addTab(directives, 'Compiler Directives')
+        self.tabs.tabBar().hide()
+        self.tabs.setDocumentMode(True)
+        self.tabs.currentChanged.connect(lambda _i: (self.update_title(), self._sync_navigator()))
         split = QSplitter(Qt.Horizontal)
         split.addWidget(self.tabs)
         cb = QWidget(); cl = QVBoxLayout(cb); cl.setContentsMargins(0, 0, 0, 0)
         self.code_title = QLabel(); cl.addWidget(self.code_title); cl.addWidget(self.code)
         split.addWidget(cb)
         split.setSizes([1050, 550])
+        cb.hide()                       # HDS has no HDL pane in the diagram window (HDL > View Generated HDL)
+        self.code_pane = cb
         self.setCentralWidget(split)
 
+        # Diagram Browser (right, as in HDS): the Structure Navigator of the diagram
+        self.navigator = QTreeWidget()
+        self.navigator.setHeaderLabel('Structure Navigator')
+        self.navigator.itemClicked.connect(self._navigator_clicked)
+        nd = QDockWidget('Diagram Browser', self); nd.setObjectName('diagram_browser')
+        nd.setWidget(self.navigator); self.addDockWidget(Qt.RightDockWidgetArea, nd)
+        self.browser_dock = nd
+
+        # Dolphin's own panels (component parameters, embedded block code, messages): kept, but
+        # hidden at start so the window looks like HDS; Edit Code / HDS Log Window show them
         self.inst_panel = InstanceParamsPanel(self.changed)
         side = QTabWidget()
         side.addTab(self.inst_panel, 'Component')
         side.addTab(emb_box, 'Embedded Block')
         self.side_tabs = side
-        d = QDockWidget('Properties', self); d.setWidget(side); self.addDockWidget(Qt.LeftDockWidgetArea, d)
-        self.browser_dock = d
+        d = QDockWidget('Properties', self); d.setObjectName('properties')
+        d.setWidget(side); self.addDockWidget(Qt.LeftDockWidgetArea, d)
+        self.props_dock = d
         self.log = QListWidget(); self.log.setFont(QFont('Courier New', 9))
-        ld = QDockWidget('Messages', self); ld.setWidget(self.log); self.addDockWidget(Qt.BottomDockWidgetArea, ld)
+        ld = QDockWidget('Messages', self); ld.setObjectName('messages')
+        ld.setWidget(self.log); self.addDockWidget(Qt.BottomDockWidgetArea, ld)
+        self.log_dock = ld
         self.resizeDocks([ld], [90], Qt.Vertical)
-        self.resizeDocks([d], [330], Qt.Horizontal)
+        self.resizeDocks([d, nd], [330, 230], Qt.Horizontal)
+        d.hide()
+        ld.hide()
+        self._fill_navigator()
 
         self.undo_stack = SnapshotUndo(lambda: self.bd.to_json(), self._restore_snapshot, self)
         self._build_actions()
@@ -1478,6 +2319,8 @@ class BdEditorWindow(QMainWindow):
         about.triggered.connect(lambda: QMessageBox.about(self, 'Dolphin HDS', 'Dolphin HDS - block diagram editor'))
         self.addAction(about)
         arrange_menus(self, BD_MENUS)
+        # HDS shows "Ready" in the status bar when no message is shown
+        self.statusBar().addWidget(QLabel('Ready'))
 
         self.timer = QTimer(self); self.timer.setSingleShot(True); self.timer.setInterval(250)
         self.timer.timeout.connect(self.regenerate)
@@ -1490,6 +2333,7 @@ class BdEditorWindow(QMainWindow):
         self.scene.edit_net_requested.connect(self.edit_net_inline)
         self.scene.port_dropped.connect(self.port_dropped)
         self.scene.frame_edit_requested.connect(self.frame_properties)
+        self.scene.component_dropped.connect(self._component_dropped)
         self.scene.end_dropped.connect(self.end_dropped)
         self.scene.context_requested.connect(self.context_menu)
         self.signals_tab.changed.connect(self.changed)
@@ -1560,7 +2404,10 @@ class BdEditorWindow(QMainWindow):
         self.mode_actions = {}
         for mode, text in (('select', 'Select'), ('select_shape', 'Select Shapes'), ('pan', 'Panning'),
                            ('component', 'Add Component...'), ('wire', 'Add Signal'),
+                           ('wire_port', 'Add Signal with a Port'), ('bus', 'Add Bus'),
+                           ('bus_port', 'Add Bus with a Port'),
                            ('port_in', 'Add Input Port'), ('port_out', 'Add Output Port'),
+                           ('port_inout', 'Add Inout Port'),
                            ('embedded', 'Add Embedded Block'), ('frame', 'Add Frame (FOR)'),
                            ('frame_if', 'Add Frame (IF)'), ('frame_else', 'Add Frame (ELSE)')):
             a = QAction(icon(mode), text, self); a.setCheckable(True)
@@ -1568,6 +2415,11 @@ class BdEditorWindow(QMainWindow):
             group.addAction(a)
             self.mode_actions[mode] = a
         self.mode_actions['select'].setChecked(True)
+        # Add > Component (F3) opens the floating Component Browser, as HDS does (drag a unit
+        # onto the diagram); set_mode('component') still places a picked component by a click
+        comp = self.mode_actions['component']
+        comp.triggered.disconnect()
+        comp.triggered.connect(lambda checked=False: self.show_component_browser())
         a_props = QAction('Object Properties', self); a_props.triggered.connect(self.properties_of_selection)
         a_hl = QAction('Highlight Net (in diagram)', self); a_hl.triggered.connect(self.highlight_net)
         a_clr = QAction('Clear Net Highlighting', self); a_clr.triggered.connect(lambda: self.highlight_net(clear=True))
@@ -1592,7 +2444,8 @@ class BdEditorWindow(QMainWindow):
         build_toolbar(self, self.toolbar_actions, BD_TOOLBAR, BD_KEYS)
         # this version draws net names and labels as part of their objects: no separate text objects
         self.toolbar_actions['select_text'].setToolTip('Select Text (no separate text objects in this version)')
-        for a in (a_down, a_del):
+        # shortcuts of commands that are in no menu of the HDS layout (F2 rename, Ctrl+D open down)
+        for a in (a_down, a_del, a_rename):
             self.addAction(a)
         self.canvas.end_command.connect(lambda: self.set_mode('select'))
         self.canvas.tool_done.connect(lambda: self.set_mode(self._mode_before_area))
@@ -1601,6 +2454,7 @@ class BdEditorWindow(QMainWindow):
         self._mode_before_area = 'select'
         self._once = False
         self._build_view_actions()
+        self._build_menu_commands()
         gt = QToolBar('Generation'); self.addToolBar(gt)
         self.lang = QComboBox(); [self.lang.addItem(LANG_LABEL[l], l) for l in LANGUAGES]
         self.lang.setToolTip('Target language')
@@ -1658,6 +2512,13 @@ class BdEditorWindow(QMainWindow):
             self.statusBar().showMessage(f'Click on the diagram to place {choice["library"]}.{choice["unit"]}')
         self.canvas.set_tool('')
         self.scene.set_mode('select' if mode in ('select_shape', 'pan') else mode)
+        if mode == 'component':
+            # the faded component that follows the cursor: same body and ports as the instance
+            # that a click will add (the "ghosted rectangle" of HDS)
+            c = self._pending_component
+            ghost = BdInstance('_ghost', c['unit'], c['library'], c['unit'])
+            self._layout_pins(ghost, c['ports'])
+            self.scene.ghost_instance = ghost
         if mode == 'pan':
             self.canvas.set_tool('pan')
         self.mode_actions[mode].setChecked(True)
@@ -1684,7 +2545,8 @@ class BdEditorWindow(QMainWindow):
         st = self.canvas.state()
         self._load(BlockDiagram.from_json(text))
         self.canvas.restore(st)
-        self.dirty = True
+        # back on the saved state (e.g. undo of every edit since the last save): no '*'
+        self.dirty = not self.undo_stack.is_clean(text)
         self.update_title()
 
     def _update_undo(self):
@@ -1697,8 +2559,23 @@ class BdEditorWindow(QMainWindow):
         return ''
 
     def _restore_view_position(self):
-        if not self.canvas.restore(load_view_state(self._view_key())):
-            self.canvas.fit()
+        """Open where the user left the diagram: Dolphin's own saved view first, then the view
+        area HDS saved in the diagram (shown at 100% from its top-left corner, as HDS opens
+        it), else the whole diagram."""
+        if self.canvas.restore(load_view_state(self._view_key())):
+            return
+        if self.bd.view_area:
+            # HDS "100%" draws 72 diagram units per screen pixel; the import scale is 1/75, so
+            # the same size on screen is a zoom of 75/72 (measured on HDS 2021.1: components
+            # and the grid are 4% larger than Dolphin at zoom 1)
+            k = 75 / 72
+            x0, y0, _x1, _y1 = self.bd.view_area
+            self.canvas.resetTransform()
+            self.canvas.scale(k, k)
+            vp = self.canvas.viewport()
+            self.canvas.centerOn(x0 + vp.width() / (2 * k), y0 + vp.height() / (2 * k))
+            return
+        self.canvas.fit()
 
     def on_scene_changed(self):
         self.signals_tab.set_rows(self.bd.signals)
@@ -1776,10 +2653,47 @@ class BdEditorWindow(QMainWindow):
         du = proj.find_unit(unit, prefer=proj.library(lib)) if proj else None
         return self._component_info(lib, unit, du)
 
+    def _place_component(self, info: dict, pos: QPointF) -> BdInstance:
+        """Add a component as HDS 2021.1 drops one from its Component Browser: the body's
+        bottom-left corner at pos, the new instance selected."""
+        inst = self._add_component(info, pos)
+        dy = -inst.h
+        inst.y += dy
+        for pin in inst.pins:
+            pin.y += dy
+        self._reload_scene()
+        self.scene.clearSelection()
+        it = self.scene.items_by_id.get(inst.id)
+        if it is not None:
+            it.setSelected(True)
+        self.changed()
+        return inst
+
+    def show_component_browser(self):
+        """Add > Component (F3): the floating Component Browser, as in HDS; a unit dragged
+        from it onto the diagram is instantiated where it is dropped."""
+        from .component_browser import ComponentBrowser
+        proj = self._project()
+        if getattr(self, '_browser', None) is None:
+            self._browser = ComponentBrowser(proj, self.bd.library, self)
+        else:
+            self._browser.fill(proj, self.bd.library)
+        self._browser.show()
+        self._browser.raise_()
+        self.set_mode('select')
+
+    def _component_dropped(self, lib: str, unit: str, pos: QPointF):
+        proj = self._project()
+        du = proj.find_unit(unit, prefer=proj.library(lib)) if proj else None
+        self._place_component(self._component_info(lib, unit, du), pos)
+        self.activateWindow()
+
     def _component_info(self, lib: str, unit: str, du) -> dict:
         from ..project.project import unit_ports
         params = du.hdl.params if du is not None and du.hdl is not None else []
-        return {'library': lib, 'unit': unit, 'ports': unit_ports(du) if du else [], 'params': params}
+        sym = next((v.path for v in du.views if v.kind == 'symbol' and v.path.endswith('.sb')), '') if du else ''
+        return {'library': lib, 'unit': unit, 'ports': unit_ports(du) if du else [], 'params': params,
+                'symbol': sym}
 
     def _component_from_file(self, path: str) -> dict | None:
         from ..hdl.parser import parse_file
@@ -1844,26 +2758,100 @@ class BdEditorWindow(QMainWindow):
     def place_at(self, pos: QPointF):
         mode = self.scene.mode
         bd = self.bd
+        if mode in ('port_in', 'port_out', 'port_inout', 'embedded'):
+            # where the preview is: the cursor on the port's stub tip / the block's bottom-left
+            pos = QPointF(*self.scene.placement_origin(mode, pos))
         if mode == 'component' and self._pending_component:
-            self._add_component(self._pending_component, pos)
-        elif mode in ('port_in', 'port_out'):
-            name, ok = QInputDialog.getText(self, 'Add port', 'Port name:')
-            name = name.strip()
-            if not ok or not name:
-                return
-            pmode = 'input' if mode == 'port_in' else 'output'
-            self._ensure_port(name, pmode)
-            bd.port_ios.append(BdPortIo(self._new_id('p'), name, pmode, pos.x(), pos.y()))
+            self._place_component(self._pending_component, pos)
+            self.set_mode('select')
+            return
+        elif mode in ('port_in', 'port_out', 'port_inout'):
+            pmode = {'port_in': 'input', 'port_out': 'output', 'port_inout': 'inout'}[mode]
+            n = len(bd.port_ios)
+            if not self._add_port_on_net(pos, pmode):
+                # In open space: a free port. As in HDS an unconnected port has no name; it takes
+                # the name of the net it gets connected to (and is not a module port until then).
+                bd.port_ios.append(BdPortIo(self._new_id('p'), '', pmode, pos.x(), pos.y()))
+            # As HDS 2021.1 does: the new port is selected and Add Port stays active (the
+            # preview follows the cursor again) until Esc, unless the command acts once
+            self._reload_scene()
+            self.scene.clearSelection()
+            for p in bd.port_ios[n:]:
+                it = self.scene.items_by_id.get(p.id)
+                if it is not None:
+                    it.setSelected(True)
+            self.changed()
+            if self._once:
+                self.set_mode('select')
+            return
         elif mode in ('frame', 'frame_if', 'frame_else'):
             if not self._add_frame(mode, pos):
                 return
         elif mode == 'embedded':
+            # an empty block, as in HDS: double-click it to create its view (Text). As HDS
+            # 2021.1 does, the new block is selected and Add Embedded Block stays active.
             n = max((e.number for e in bd.embedded), default=0) + 1
-            bd.embedded.append(BdEmbedded(self._new_id('e'), f'eb{n}', n, '// HDL code\n', pos.x(), pos.y(), 240, 90))
+            eb = BdEmbedded(self._new_id('e'), f'eb{n}', n, '', pos.x(), pos.y(), *EMB_NEW_SIZE)
+            bd.embedded.append(eb)
+            self._reload_scene()
+            self.scene.clearSelection()
+            it = self.scene.items_by_id.get(eb.id)
+            if it is not None:
+                it.setSelected(True)
+            self.changed()
+            if self._once:
+                self.set_mode('select')
+            return
         else:
             return
         self._reload_scene()
         self.set_mode('select')
+
+    def _add_port_on_net(self, pos: QPointF, pmode: str) -> bool:
+        """Add a port at pos (where its faded preview is) if the port's wire end - the tip of its
+        stub, as drawn on the preview, not its middle - is on something it can attach to. No
+        name is asked: the port takes the net's name.
+          a dangling net end - the end goes onto the tip;
+          a component port   - a net from the component port to the tip, named after the
+                               component port's net, or the component port itself;
+          the body of a net  - a junction dot on the net, joined to the tip.
+        The port stays where it is put; it then faces its net (port_side() follows the net).
+        Returns False when the tip is on nothing (the caller adds a free, unnamed port)."""
+        bd, sc = self.bd, self.scene
+        pio = BdPortIo(self._new_id('p'), '', pmode, pos.x(), pos.y())
+        tip = QPointF(*sc.port_edge(pio))       # no net yet: the side the preview shows
+        # 1) a dangling net end
+        hit = self._dangling_end_at(tip)
+        if hit is not None:
+            w, which, k = hit
+            bd.port_ios.append(pio)
+            _shift_end(w, which, tip.x() - w.points[k][0], tip.y() - w.points[k][1])
+            w.points = _simplify(w.points)
+            setattr(w, which, f'pio:{pio.id}')
+            self._port_takes_net(pio, w.net)
+            self._turn_port_to_end(pio, w.points[k])
+            return True
+        # 2) a component port
+        pin_hit = sc.pin_at(tip)
+        if pin_hit is not None and pin_hit[2] is not None:
+            ref, pt, pin, _ = pin_hit
+            net = pin.net or pin.name
+            bd.port_ios.append(pio)
+            pin.net = net
+            w = BdWire(self._new_id('w'), net, _route([pt.x(), pt.y()], [], [tip.x(), tip.y()]), ref, f'pio:{pio.id}')
+            w.show_text = False                 # the name is shown on the port
+            bd.wires.append(w)
+            self._ensure_port(net, pmode, pin.bounds)
+            pio.name = net
+            return True
+        # 3) the body of a net
+        net_hit = sc.net_at(tip)
+        if net_hit is not None:
+            net_wire = next(x for x in bd.wires if net_hit[0] == f'net:{x.id}')
+            bd.port_ios.append(pio)
+            self._attach_port_to_net(pio, tip, net_hit[1], net_wire)
+            return True
+        return False
 
     def _add_frame(self, mode: str, pos: QPointF) -> bool:
         """New generate frame at pos. FOR: "name: [left:right]" (instances inside become
@@ -1970,17 +2958,51 @@ class BdEditorWindow(QMainWindow):
     def _add_component(self, info: dict, pos: QPointF) -> BdInstance:
         unit, ports = info['unit'], info['ports']
         names = {i.name for i in self.bd.instances}
+        # as HDS 2021.1 names a dropped component: the unit name, then unit1, unit2, ...
         name, k = unit, 0
         while name in names:
             k += 1
-            name = f'{unit}_{k}'
+            name = f'{unit}{k}'
         inst = BdInstance(self._new_id('i'), name, info['library'], unit, x=pos.x(), y=pos.y(),
                           source=info.get('source', ''))
         self._layout_pins(inst, ports)
+        if info.get('symbol'):
+            self._symbol_layout(inst, info['symbol'])
         if not ports:
             self.log.addItem(f'{info["library"]}.{unit}: interface not found, the instance has no pins')
         self.bd.instances.append(inst)
         return inst
+
+    @staticmethod
+    def _symbol_layout(inst: BdInstance, path: str):
+        """Body size and port places from the unit's symbol (.sb), as HDS 2021.1 instantiates a
+        component (the generic layout of _layout_pins is the fallback). The name lines start at
+        the top of the body, 1800 units left of its middle (as HDS placed them)."""
+        try:
+            from ..hds.import_bd import symbol_geometry
+            geo = symbol_geometry(path)
+        except Exception:
+            geo = None
+        if geo is None:
+            return
+        w, h, ports = geo
+        old = {p.name: p for p in inst.pins}
+        inst.w, inst.h = w, h
+        inst.pins = []
+        for name, mode, bounds, order, x, y, side in ports:
+            # the triangle sits on the body edge (a port shape may be wider, e.g. with a bubble)
+            if side == 'left':
+                x = -PIN_HALF
+            elif side == 'right':
+                x = w + PIN_HALF
+            elif side == 'top':
+                y = -PIN_HALF
+            else:
+                y = h + PIN_HALF
+            prev = old.get(name)
+            inst.pins.append(BdPin(name, mode, prev.net if prev else '', order or len(inst.pins) + 1,
+                                   inst.x + x, inst.y + y, side, bounds or (prev.bounds if prev else '')))
+        inst.text_pos = [w / 2 - 1800 / 75, 0.0]
 
     @staticmethod
     def _layout_pins(inst: BdInstance, ports: list[tuple[str, str, str]]):
@@ -2024,7 +3046,23 @@ class BdEditorWindow(QMainWindow):
             a.setShortcut(QKeySequence('Alt+Return')); a.setShortcutVisibleInContextMenu(True)
         elif isinstance(item, EmbeddedItem):
             eb = item.obj
-            m.addAction('Edit Code', lambda: (self.side_tabs.setCurrentIndex(1), self.emb_edit.setFocus()))
+            # As in HDS: Open (the view, or Create Embedded View when there is none), and on a
+            # connection point Change Mode, which flips the net's direction (a net leaving the
+            # block is an output, one entering it an input).
+            m.addAction('&Open', lambda: self.embedded_double_click(item, item.body().center())).setEnabled(not ro)
+            end = item.end_at(scene_pos)
+            cm = m.addMenu('Change &Mode')
+            cm.setEnabled(end is not None and not ro)
+            if end is not None:
+                w, which = end
+                for text, out in (('&In', False), ('&Out', True)):
+                    a = cm.addAction(text, lambda out=out: self.set_embedded_port_mode(w, which, out))
+                    a.setCheckable(True)
+                    a.setChecked((which == 'start') == out)
+            m.addAction('Change Embedded &View...', lambda: self.change_embedded_view(eb)).setEnabled(
+                not ro and item.text_rect() is not None)
+            m.addAction('Edit Code', lambda: (self.props_dock.show(), self.side_tabs.setCurrentIndex(1),
+                                              self.emb_edit.setFocus()))
             m.addAction('Rename...', lambda: self.rename_embedded(eb)).setEnabled(not ro)
             m.addSeparator()
             m.addAction('Delete', self.delete_selected).setEnabled(not ro)
@@ -2147,6 +3185,9 @@ class BdEditorWindow(QMainWindow):
         self._menu_item(m, 'Remove &All Routes', lambda: self.remove_all_routes(w),
                         enabled=not ro and len(w.points) > 2)
         self._menu_item(m, 'Add Port &I/O', lambda: self.add_port_io_for(w), enabled=not ro and not (w.start and w.end))
+        bus = self.scene.is_bus(net)
+        self._menu_item(m, 'Change St&yle to Signal' if bus else 'Change St&yle to Bus',
+                        lambda: self.set_net_style(net, not bus), enabled=not ro)
         self._menu_item(m, '&Goto Destination ...', lambda: self.goto_destination(net))
         m.addSeparator()
         self._edit_items(m, pos, ro, can_copy=False)
@@ -2209,6 +3250,37 @@ class BdEditorWindow(QMainWindow):
         self._menu_item(m, 'Object &Properties...', lambda: self.port_properties(pio), 'Alt+Return')
 
     # net / port commands
+    def set_net_style(self, net: str, bus: bool):
+        """Change Style: draw the net as a bus (thick) or a signal (thin). As in HDS the style
+        is only the look of the net; its declaration (bounds) is not changed."""
+        self.bd.net_styles[net] = 'bus' if bus else 'signal'
+        self._reload_scene()
+
+    def set_embedded_port_mode(self, w: BdWire, which: str, out: bool):
+        """Change Mode of a connection on an embedded block. The mode is the direction the net
+        is drawn in (a net starting on the block is an output, ending on it an input), so a
+        change reverses the net: points, ends and the name position (kept where it is)."""
+        if (which == 'start') == out:
+            return
+        if w.label is not None and w.points:
+            # the name offset is relative to the first point, which becomes the last
+            fx, fy = w.points[0]
+            lx, ly = w.points[-1]
+            w.label = [w.label[0] + fx - lx, w.label[1] + fy - ly]
+        w.points.reverse()
+        w.start, w.end = w.end, w.start
+        self._reload_scene()
+
+    def change_embedded_view(self, eb: BdEmbedded):
+        """Change Embedded View (HDS): drop the existing view, then Create Embedded View."""
+        if QMessageBox.question(self, 'Change Embedded View', f'Delete the existing view of {eb.name}?') \
+                != QMessageBox.Yes:
+            return
+        eb.text, eb.text_box = '', None
+        self._reload_scene()
+        item = self.scene.items_by_id[eb.id]
+        self.embedded_double_click(item, item.body().center())
+
     def add_route(self, w: BdWire, k: int, pos: QPointF):
         a, b = w.points[k], w.points[k + 1]
         if abs(a[1] - b[1]) < 0.01:
@@ -2511,7 +3583,7 @@ class BdEditorWindow(QMainWindow):
 
     def _new_id(self, prefix: str) -> str:
         used = {i.id for i in self.bd.instances} | {e.id for e in self.bd.embedded} | \
-               {p.id for p in self.bd.port_ios} | {w.id for w in self.bd.wires} | {f.id for f in self.bd.frames}
+               {p.id for p in self.bd.port_ios} | {w.id for w in self.bd.wires} | {f.id for f in self.bd.frames} |                {j.id for j in self.bd.junctions} | {c.id for c in self.bd.comments}
         k = 1
         while f'{prefix}n{k}' in used:
             k += 1
@@ -2529,47 +3601,177 @@ class BdEditorWindow(QMainWindow):
             return None
         return next((p for p in self.bd.port_ios if p.id == ref[4:]), None)
 
+    def _default_net_name(self, bus: bool) -> str:
+        """HDS default name of a new net: sig0, sig1... for a signal, dbus0, dbus1... for a bus
+        (the first number not used by a signal of the diagram)."""
+        base = 'dbus' if bus else 'sig'
+        used = {s.name for s in self.bd.signals} | {w.net for w in self.bd.wires}
+        k = 0
+        while f'{base}{k}' in used:
+            k += 1
+        return f'{base}{k}'
+
     def add_wire(self, start_ref: str, end_ref: str, a: list, bends: list, b: list):
-        bd = self.bd
-        ends = [self._pin(start_ref), self._pin(end_ref)]
-        pios = [self._pio(start_ref), self._pio(end_ref)]
-        nets = {p.net for p in ends if p and p.net} | {p.name for p in pios if p}
+        """A net drawn with Add Signal / Add Bus (and their "with a Port" variants), named as
+        HDS names it, without asking:
+          - an end on a net (component port net, PortIO, existing net) gives that net's name;
+          - else an end on a component port gives the port's name and bounds;
+          - else the default name sig<n> (a bus: dbus<n>, bounds [15:0]).
+        Ends on two different nets are refused. An end on an existing net ("net:<wire id>") is
+        joined to it with a junction dot. "with a Port": an open-space start gets an input
+        port, an open-space end an output port, connected and named after the net."""
+        bd, mode = self.bd, self.scene.mode
+        bus = mode in ('bus', 'bus_port')
+        refs = [start_ref, end_ref]
+        pins = [self._pin(r) for r in refs]
+        pios = [self._pio(r) for r in refs]
+        joined = [next((w for w in bd.wires if r == f'net:{w.id}'), None) if r.startswith('net:') else None
+                  for r in refs]
+        nets = ({p.net for p in pins if p and p.net} | {p.name for p in pios if p and p.name}
+                | {w.net for w in joined if w})
         if len(nets) > 1:
             QMessageBox.warning(self, 'Add wire', f'The two ends are already on different nets: {", ".join(sorted(nets))}')
             return
+        first_pin = next((p for p in pins if p), None)
         if nets:
             net = nets.pop()
+        elif first_pin is not None:
+            net = first_pin.name                # the net takes the component port's name
         else:
-            first = next((p for p in ends if p), None)
-            net, ok = QInputDialog.getText(self, 'New net', 'Net name:', text=first.name if first else 'net')
-            net = net.strip()
-            if not ok or not net:
-                return
-        for p in ends:
+            net = self._default_net_name(bus)
+        points = _route(a, bends, b)
+        if len(points) < 2 or points[0] == points[-1]:
+            return                              # nothing drawn
+        # As HDS 2021.1: a signal (not a bus) started or ended on a bus rips one element of it;
+        # HDS asks which ("Rip Element From Bus"). The new wire carries that slice of the bus.
+        rip = ''
+        bus_end = next((w for w in joined if w is not None and self.scene.is_bus(w.net)), None)
+        if bus_end is not None and not bus:
+            rip = self._ask_rip_element(bus_end.net)
+            if rip is None:
+                return                          # Cancel: nothing is drawn
+        # an end on an existing net: a junction dot there, the new net attached to it
+        for k, w in enumerate(joined):
+            if w is None:
+                continue
+            pt = points[0] if k == 0 else points[-1]
+            j = BdJunction(self._new_id('j'), pt[0], pt[1])
+            bd.junctions.append(j)
+            refs[k] = f'jct:{j.id}'
+            # a dangling end of that net lying on the dot is joined to it as well
+            for which, idx in (('start', 0), ('end', -1)):
+                if not getattr(w, which) and w.points and w.points[idx] == pt:
+                    setattr(w, which, f'jct:{j.id}')
+        for p in pins:
             if p:
                 p.net = net
         if not any(s.name == net for s in bd.signals):
-            bounds = next((p.bounds for p in ends if p and p.bounds), '')
+            bounds = next((p.bounds for p in pins if p and p.bounds), '') or ('[15:0]' if bus else '')
             bd.signals.append(Sig(net, 'local', 'wire', bounds))
-        bd.wires.append(BdWire(self._new_id('w'), net, _route(a, bends, b), start_ref, end_ref))
+        for p in pios:
+            if p is not None and not p.name:
+                # a port that had no name yet takes the net's name and becomes a module port
+                p.name = net
+                self._ensure_port(net, p.mode)
+        w = BdWire(self._new_id('w'), net, points, refs[0], refs[1], slice=rip)
+        for p in pins:
+            if p is not None and rip:
+                p.slice = rip                   # the component port gets that element of the bus
+        self._place_new_label(w)
+        bd.wires.append(w)
+        if mode in ('wire_port', 'bus_port'):
+            for which, idx, nxt, pmode in (('start', 0, 1, 'input'), ('end', -1, -2, 'output')):
+                if getattr(w, which):
+                    continue
+                # the port's edge on the open end, the port on the far side from the net
+                ex, ey = points[idx]
+                side = 1 if points[nxt][0] >= ex else -1
+                pio = BdPortIo(self._new_id('p'), net, pmode, ex - side * PORT_EDGE, ey)
+                bd.port_ios.append(pio)
+                setattr(w, which, f'pio:{pio.id}')
+                self._ensure_port(net, pmode)
         self.scene.load(bd)
+        # as HDS, the new net is left selected
+        for it in self.scene.items():
+            if isinstance(it, WireItem) and it.obj is w:
+                it.setSelected(True)
         self.signals_tab.set_rows(bd.signals)
         self.changed()
+
+    def _ask_rip_element(self, net: str) -> str | None:
+        """The "Rip Element From Bus" dialog of HDS: which element of the bus a signal drawn
+        from it carries. Returns "[n]" ('' when nothing is typed) or None on Cancel. The
+        elements are offered from the bus bounds, MSB first; any index expression can be typed."""
+        import re
+        sig = next((s for s in self.bd.signals if s.name == net), None)
+        bounds = sig.bounds if sig else ''
+        dlg = QDialog(self)
+        dlg.setWindowTitle('Rip Element From Bus')
+        lay = QVBoxLayout(dlg)
+        lay.addWidget(QLabel('Specify bus element to rip:'))
+        lay.addWidget(QLabel(f'        Bus:   {sig.type if sig else "wire"} {bounds} {net}'))
+        row = QHBoxLayout()
+        row.addWidget(QLabel('Specify Element:'))
+        elem = QComboBox(); elem.setEditable(True)
+        m = re.fullmatch(r'\[\s*(\d+)\s*:\s*(\d+)\s*\]', bounds.strip())
+        if m:
+            hi, lo = int(m.group(1)), int(m.group(2))
+            step = -1 if hi >= lo else 1
+            elem.addItems([str(i) for i in range(hi, lo + step, step)])
+        row.addWidget(elem, 1)
+        row.addWidget(QLabel(':'))
+        second = QComboBox(); second.setEnabled(False)      # the range end (not used for one element)
+        row.addWidget(second, 1)
+        lay.addLayout(row)
+        bb = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel | QDialogButtonBox.Help)
+        bb.button(QDialogButtonBox.Help).setEnabled(False)
+        bb.accepted.connect(dlg.accept); bb.rejected.connect(dlg.reject)
+        lay.addWidget(bb)
+        if not dlg.exec():
+            return None
+        t = elem.currentText().strip()
+        return f'[{t}]' if t else ''
+
+    @staticmethod
+    def _place_new_label(w: BdWire):
+        """Name position of a new net, as HDS 2021.1 places it (read back from diagrams it saved;
+        HDS units, 75 per scene unit), from the start of the first segment:
+          - right: baseline 200 above the net, text starting 2000 after the start;
+          - left: baseline 200 above, text starting 3000 before the start;
+          - down: text read upward, baseline 200 left of the net, its top 2000 below the start;
+          - up: the same, its top 3000 above the start (by symmetry with left).
+        The stored offset is the baseline origin relative to the first point (as imported)."""
+        if len(w.points) < 2:
+            return
+        (x0, y0), (x1, y1) = w.points[0], w.points[1]
+        u = 1 / 75                                   # one HDS unit in scene units
+        if abs(y0 - y1) < 0.01:                      # horizontal
+            w.label = [(2000 if x1 >= x0 else -3000) * u, -200 * u]
+            w.label_vertical = False
+        else:                                        # vertical: the baseline origin is the text's bottom end
+            tw = QFontMetricsF(MONO).horizontalAdvance(w.net)
+            w.label = [-200 * u, (2000 if y1 >= y0 else -3000) * u + tw]
+            w.label_vertical = True
 
     def _selected_net(self) -> str:
         w = next((i.obj for i in self.scene.selectedItems() if isinstance(i, WireItem)), None)
         return w.net if w else ''
 
     def edit_net_inline(self, net: str, pos: QPointF):
-        """Edit the net name (and bus bounds, as name[msb:lsb]) in a box on the diagram."""
+        """Edit a net (or the port that stands for it) in place, in a box on the diagram, in the
+        HDS form "name : type[bounds]", e.g. "rc_write_enable_rt : wire[DC_ROUTE_NUM - 1:0]".
+        pos is the baseline start of the net name on the diagram (or the click position): the box
+        is laid over it so the text being edited sits where the name was drawn."""
         if not net or self.scene.readonly:
             return
         sig = next((s for s in self.bd.signals if s.name == net), None)
-        ed = QLineEdit(net + (sig.bounds if sig is not None and sig.bounds else ''), self.canvas.viewport())
+        kind = (sig.type if sig is not None and sig.type else 'wire') + (' signed' if sig is not None and sig.signed else '')
+        ed = QLineEdit(f'{net} : {kind}{sig.bounds if sig is not None and sig.bounds else ""}', self.canvas.viewport())
         ed.setFont(QFont('Courier New', 9))
         ed.setMinimumWidth(max(160, ed.fontMetrics().horizontalAdvance(ed.text()) + 30))
         ed.adjustSize()
-        ed.move(self.canvas.mapFromScene(pos) - QPoint(10, ed.height() // 2))
+        # baseline -> top-left of the box: up by the box height less the descent, left by the frame
+        ed.move(self.canvas.mapFromScene(pos) - QPoint(4, ed.height() - 4))
         ed.selectAll()
         done = []
 
@@ -2578,9 +3780,109 @@ class BdEditorWindow(QMainWindow):
                 return
             done.append(1)
             text = ed.text().strip()
-            ed.deleteLater()
+            ed.hide(); ed.deleteLater()        # hidden at once, deleted by the event loop
             if apply and text:
                 QTimer.singleShot(0, lambda: self.apply_net_text(net, text))
+
+        ed.returnPressed.connect(lambda: finish(True))
+        ed.installEventFilter(self)
+        self.canvas.viewport().installEventFilter(self)     # a click on the diagram cancels
+        self._inline_editor = (ed, finish)
+        ed.show()
+        ed.setFocus()
+
+    def embedded_double_click(self, item: 'EmbeddedItem', pos: QPointF):
+        """Double-click on an embedded block, as in HDS:
+          on the white Text view   - edit the HDL text in place;
+          on the yellow block      - with no view yet, "Create Embedded View" asks which view to
+                                     create (only Text is supported); with a Text view, edit it.
+        A new Text view starts as "// <name> <number>" in a box at the block's bottom-right
+        corner (where HDS puts it); it can then be edited right away."""
+        eb = item.obj
+        if item.text_rect() is None:
+            dlg = EmbeddedViewDialog(eb.name, self)
+            if not dlg.exec():
+                return
+            w, h = item._size()
+            eb.text_box = [w, h, 240.0, 60.0]
+            eb.text = f'// {eb.name} {eb.number}\n'
+            self._reload_scene()
+            item = self.scene.items_by_id[eb.id]     # the scene was rebuilt
+        self.edit_embedded_text_inline(item)
+
+    def edit_embedded_text_inline(self, item: 'EmbeddedItem'):
+        """Edit the HDL text of an embedded block in a box over its Text view. As in HDS a click
+        elsewhere (focus leaves the box) keeps the text; Esc throws the edit away."""
+        eb = item.obj
+        box = item.text_rect()
+        # the box on screen: the Text view mapped to the viewport, never smaller than 320 x 120
+        r = self.canvas.mapFromScene(item.mapToScene(box)).boundingRect()
+        ed = _InlineText(eb.text, self.canvas.viewport())
+        ed.setGeometry(r.x(), r.y(), max(r.width(), 320), max(r.height(), 120))
+
+        def commit(text: str):
+            if text != eb.text:
+                eb.text = text
+                self.scene.items_by_id[eb.id].update()
+                self.scene.changed_model.emit()
+        ed.committed.connect(commit)
+        ed.show()
+        ed.setFocus()
+
+    def edit_component_text_inline(self, item: 'InstanceItem', kind: str):
+        """Double-click on a name line of a component: edit it in place, in a white box over
+        the text, as HDS does. Enter applies, Esc or a click elsewhere cancels.
+
+        kind is the line that was double-clicked:
+          'instance' - renames the instance (must be a new, valid Verilog identifier);
+          'unit'     - makes the instance use another component of the same library;
+          'library'  - makes the instance use the same component from another library.
+        For 'unit' and 'library' the ports are read again from the new component's HDL
+        (Update Interface), so nets on ports that no longer exist are removed."""
+        inst = item.obj
+        box = next(r for k, _, r in item.name_lines() if k == kind)
+        old = {'instance': inst.name, 'unit': inst.unit, 'library': inst.library}[kind]
+        ed = QLineEdit(old, self.canvas.viewport())
+        ed.setFont(QFont('Courier New', 9, QFont.Bold))
+        ed.setMinimumWidth(max(140, ed.fontMetrics().horizontalAdvance(old) + 30))
+        ed.adjustSize()
+        # place the box over the line: scene -> viewport coordinates of the line's top-left
+        ed.move(self.canvas.mapFromScene(item.mapToScene(box.topLeft())) - QPoint(2, 3))
+        ed.selectAll()
+        done = []                               # finish() runs once (Enter, then focus loss)
+
+        def finish(apply: bool):
+            if done:
+                return
+            done.append(1)
+            text = ed.text().strip()
+            ed.hide(); ed.deleteLater()        # hidden at once, deleted by the event loop
+            if not apply or not text or text == old:
+                return
+            if not re.fullmatch(r'[A-Za-z_][A-Za-z0-9_$]*', text):
+                self.statusBar().showMessage(f'"{text}" is not a Verilog identifier', 5000)
+                return
+            if kind == 'instance':
+                if any(i.name == text for i in self.bd.instances if i is not inst):
+                    self.statusBar().showMessage(f'Instance {text} already exists', 5000)
+                    return
+                inst.name = text
+            else:
+                # Point the instance at the other component, then take its ports. If the new
+                # component cannot be found, go back: an instance of an unknown unit would
+                # generate HDL that does not compile.
+                setattr(inst, kind, text)
+                if not self._interface(inst):
+                    setattr(inst, kind, old)
+                    self.statusBar().showMessage(f'Component {inst.library}.{text if kind == "unit" else inst.unit} '
+                                                 f'not found', 6000)
+                    return
+                # update_interface() rebuilds the scene: `item` is gone after it, do not touch it
+                self.update_interface(inst)
+                self.scene.changed_model.emit()
+                return
+            item.prepareGeometryChange(); item.update()
+            self.scene.changed_model.emit()
 
         ed.returnPressed.connect(lambda: finish(True))
         ed.installEventFilter(self)
@@ -2623,6 +3925,113 @@ class BdEditorWindow(QMainWindow):
         act('page_break', 'Page Break Preview')
         self.canvas.viewport().installEventFilter(self)
 
+    # -- menu bar commands that act on the selection (HDS File / Diagram / Options / Window) --
+    def _sel(self, cls) -> list:
+        """Model objects of the selected items of one kind (InstanceItem, WireItem, PortIoItem)."""
+        return [i.obj for i in self.scene.selectedItems() if isinstance(i, cls)]
+
+    def _build_menu_commands(self):
+        """Commands of the HDS menu bar that the toolbar does not have. Each one works on the
+        current selection like its entry in the right-click menus; update_menu_states enables
+        them when a menu opens, from what is selected then (as HDS greys its entries)."""
+        def act(key, text, slot=None, shortcut=''):
+            a = QAction(text, self)
+            if shortcut:
+                a.setShortcut(QKeySequence(shortcut))
+                self.addAction(a)                # the shortcut works without opening the menu
+            if slot is not None:
+                a.triggered.connect(slot)
+            else:
+                a.setEnabled(False)
+            self.toolbar_actions[key] = a
+            return a
+
+        def each(cls, fn):
+            # apply fn to every selected object of a kind; one undo step for all of them
+            def run():
+                for obj in self._sel(cls):
+                    fn(obj)
+                self.changed()
+            return run
+
+        def nets(fn):
+            # apply fn once per selected net (a net drawn as several wires counts once)
+            def run():
+                for net in dict.fromkeys(w.net for w in self._sel(WireItem)):
+                    fn(net)
+                self.changed()
+            return run
+
+        ro = self.scene.readonly
+        mgr = self.context.manager if self.context is not None else None
+        # File
+        act('close_window', 'Close Window', self.close)
+        act('exit', 'Exit', QApplication.instance().closeAllWindows)
+        act('page_setup', 'Page Setup...', mgr.page_setup if mgr else None)
+        # Diagram > Ports
+        for key, text, mode in (('port_mode_in', 'In', 'input'), ('port_mode_out', 'Out', 'output'),
+                                ('port_mode_inout', 'InOut', 'inout')):
+            act(key, text, None if ro else each(PortIoItem, lambda p, m=mode: self.change_port_mode(p, m)))
+        act('equidistant', 'Equidistant Ports', None if ro else each(InstanceItem, self.equidistant))
+        # Diagram > Signals
+        act('net_comment', 'Edit...', None if ro else nets(self.net_comment))
+        act('net_highlight', 'Single Level', nets(self._highlight))
+        act('net_clear_highlight', 'Clear All', lambda: self._highlight(''))
+        act('net_change_style', 'Change Style', None if ro else nets(self.change_style))
+        act('net_add_port_io', 'Add Port I/O',
+            None if ro else each(WireItem, lambda w: None if (w.start and w.end) else self.add_port_io_for(w)))
+        # Diagram > Text: show / hide the name of the selected nets and ports
+        act('text_show', 'Show Text', None if ro else lambda: self._set_text_visible(True))
+        act('text_hide', 'Hide Text', None if ro else lambda: self._set_text_visible(False))
+        # Diagram: connect (not implemented), Port Map Frame, Update, Compiler Directives
+        act('connect', 'Connect', None, 'Alt+C')
+        act('portmap_enable', 'Enable', None if ro else each(InstanceItem, lambda i: self._set_portmap(i, True)))
+        act('portmap_disable', 'Disable', None if ro else each(InstanceItem, lambda i: self._set_portmap(i, False)))
+        act('portmap_edit', 'Edit...', lambda: [self.component_properties(i, 'portmap')
+                                                for i in self._sel(InstanceItem)[:1]])
+        act('update_interface', 'Interface...', None if ro else each(InstanceItem, self.update_interface))
+        act('compiler_directives', 'Compiler Directives...', lambda: self.tabs.setCurrentIndex(3))
+        act('check_design', 'Check Design', self.run_checks)
+        # Options / Window / Help: the Design Manager's dialogs and windows
+        act('main_settings', 'Main...', mgr.main_settings if mgr else None)
+        act('verilog_options', 'Verilog...', mgr.verilog_options if mgr else None)
+        act('log_window', 'HDS Log Window', lambda: (self.log_dock.show(), self.log_dock.raise_()))
+        act('design_manager', 'Design Manager',
+            (lambda: (mgr.show(), mgr.raise_(), mgr.activateWindow())) if mgr else None)
+        act('shortcuts_help', 'Keyboard Shortcuts', mgr._show_shortcuts if mgr else None)
+
+    def _set_text_visible(self, on: bool):
+        """Diagram > Text > Show / Hide Text for the selected nets and ports."""
+        for w in self._sel(WireItem):
+            if w.show_text != on:
+                self.toggle_net_text(w)
+        for p in self._sel(PortIoItem):
+            if p.show_text != on:
+                self.toggle_port_text(p)
+
+    def update_menu_states(self):
+        """Grey the selection commands that have nothing to act on, as HDS does."""
+        if self.scene.readonly:
+            return
+        ports, wires, insts = self._sel(PortIoItem), self._sel(WireItem), self._sel(InstanceItem)
+        enable = {
+            'port_mode_in': ports, 'port_mode_out': ports, 'port_mode_inout': ports,
+            'equidistant': insts, 'net_comment': wires, 'net_highlight': wires, 'net_change_style': wires,
+            'net_add_port_io': [w for w in wires if not (w.start and w.end)],
+            'text_show': wires or ports, 'text_hide': wires or ports,
+            'portmap_enable': insts, 'portmap_disable': insts, 'portmap_edit': insts, 'update_interface': insts,
+        }
+        for key, objs in enable.items():
+            a = self.toolbar_actions.get(key)
+            if a is not None:
+                a.setEnabled(bool(objs))
+        # Change Mode shows the mode of the selected port as a check mark
+        mode = ports[0].mode if len(ports) == 1 else None
+        for key, m in (('port_mode_in', 'input'), ('port_mode_out', 'output'), ('port_mode_inout', 'inout')):
+            a = self.toolbar_actions[key]
+            a.setCheckable(True)
+            a.setChecked(mode == m)
+
     def _refresh_view(self):
         self._reload_scene()
         self.canvas.viewport().update()
@@ -2650,30 +4059,50 @@ class BdEditorWindow(QMainWindow):
         return super().eventFilter(obj, e)
 
     # -- connecting by dragging -------------------------------------------------------
-    def port_dropped(self, pio: BdPortIo):
-        """A free port dropped on a net connector connects to that net and takes its name."""
-        if any(True for _ in self.scene._attached(f'pio:{pio.id}')):
-            return
+    def _dangling_end_at(self, p: QPointF) -> tuple[BdWire, str, int] | None:
+        """The dangling net end (red circle) nearest to p within the port grab distance, as
+        (wire, 'start' | 'end', point index)."""
         best = None
         for w in self.bd.wires:
             for which, k in (('start', 0), ('end', -1)):
-                if getattr(w, which):
+                if getattr(w, which) or not w.points:
                     continue
-                end = w.points[k]
-                d = min(abs(end[0] - (pio.x + s * PORT_EDGE)) for s in (1, -1)) + abs(end[1] - pio.y)
-                if abs(end[1] - pio.y) <= 8 and abs(end[0] - pio.x) <= PORT_EDGE + 12 and (best is None or d < best[0]):
+                ex, ey = w.points[k]
+                d = abs(ex - p.x()) + abs(ey - p.y())
+                if abs(ex - p.x()) <= PIN_GRAB and abs(ey - p.y()) <= PIN_GRAB and (best is None or d < best[0]):
                     best = (d, w, which, k)
-        if best is None:
+        return best[1:] if best else None
+
+    def _turn_port_to_end(self, pio: BdPortIo, end: list[float]):
+        """After a net end is put on a port's wire end: the port faces its net (port_side()),
+        which may be the other side than before; shift the port so that its wire end on that
+        side is exactly on the net end (the port "turns" around the net end, as in HDS)."""
+        side = self.scene.port_side(pio)
+        pio.x, pio.y = end[0] - side * PORT_EDGE, end[1]
+
+    def port_dropped(self, pio: BdPortIo):
+        """A free port dragged so that its wire end (the tip of its stub, not its middle) lands
+        on a dangling net end or on the body of a net connects to that net and takes its name.
+        The port stays where it was dropped: the net comes to the tip."""
+        if any(True for _ in self.scene._attached(f'pio:{pio.id}')):
             return
-        _, w, which, k = best
-        nxt = w.points[1] if k == 0 else w.points[-2]
-        side = 1 if nxt[0] > pio.x else -1
-        edge = [pio.x + side * PORT_EDGE, pio.y]
-        _shift_end(w, which, edge[0] - w.points[k][0], edge[1] - w.points[k][1])
-        w.points = _simplify(w.points)
-        setattr(w, which, f'pio:{pio.id}')
-        self._port_takes_net(pio, w.net)
-        self.statusBar().showMessage(f'Port connected to net {w.net}', 4000)
+        tip = QPointF(*self.scene.port_edge(pio))
+        hit = self._dangling_end_at(tip)
+        if hit is not None:
+            # the dangling end moves onto the tip (its last segment keeps its right angle)
+            w, which, k = hit
+            _shift_end(w, which, tip.x() - w.points[k][0], tip.y() - w.points[k][1])
+            w.points = _simplify(w.points)
+            setattr(w, which, f'pio:{pio.id}')
+            self._port_takes_net(pio, w.net)
+            self._turn_port_to_end(pio, w.points[k])
+        else:
+            net = self.scene.net_at(tip)
+            if net is None:
+                return
+            net_wire = next(x for x in self.bd.wires if net[0] == f'net:{x.id}')
+            self._attach_port_to_net(pio, tip, net[1], net_wire)
+        self.statusBar().showMessage(f'Port connected to net {pio.name}', 4000)
         QTimer.singleShot(0, self._reload_scene)
 
     def end_dropped(self, w: BdWire):
@@ -2694,10 +4123,27 @@ class BdEditorWindow(QMainWindow):
             setattr(w, which, ref)
             w.points[k] = [pt.x(), pt.y()]
             w.points = _simplify(_orthogonal(w.points))
-            if pio is not None and pio.name != w.net:
+            if pio is not None and not pio.name:
+                self._port_takes_net(pio, w.net)        # a port with no name yet takes the net's
+            elif pio is not None and pio.name != w.net:
                 self._rename(w.net, pio.name)
                 self._ensure_port(pio.name, pio.mode)
             QTimer.singleShot(0, self._reload_scene)
+
+    def _attach_port_to_net(self, pio: BdPortIo, tip: QPointF, q: QPointF, net_wire: BdWire):
+        """Connect a port whose wire end is at tip to the body of an existing net at q (the
+        point of the net nearest to the tip): a junction dot on the net at q, and a net from the
+        tip to the dot (none to see when the tip is on the net). The port does not move. The
+        port takes the net's name; the short net shows no name of its own (the net's name is
+        already on the net and on the port)."""
+        j = BdJunction(self._new_id('j'), q.x(), q.y())
+        self.bd.junctions.append(j)
+        a, b = [tip.x(), tip.y()], [q.x(), q.y()]
+        w = BdWire(self._new_id('w'), net_wire.net, _route(a, [], b) if a != b else [a, b],
+                   f'pio:{pio.id}', f'jct:{j.id}')
+        w.show_text = False
+        self.bd.wires.append(w)
+        self._port_takes_net(pio, net_wire.net)
 
     def _port_takes_net(self, pio: BdPortIo, net: str):
         """Rename a port to the net it is connected to; the net becomes a port of the module."""
@@ -2714,14 +4160,24 @@ class BdEditorWindow(QMainWindow):
             self.bd.signals = [s for s in self.bd.signals if s.name != old]
 
     def apply_net_text(self, old: str, text: str):
-        """Text typed for a net: "name" or "name[msb:lsb]" (bounds change the signal to a bus)."""
-        m = re.fullmatch(r'\s*([A-Za-z_][\w$]*)\s*(\[[^\]]*\])?\s*', text)
+        """Apply the text typed for a net. Accepted forms:
+            name                      rename only
+            name[msb:lsb]             rename, and make the net that bus
+            name : type[msb:lsb]      HDS form; type is wire, reg, logic... optionally "signed"
+        A part left out keeps its current value. A new name that already exists joins the two
+        nets after a confirmation."""
+        m = re.fullmatch(r'\s*([A-Za-z_][\w$]*)\s*(?::\s*([A-Za-z_]\w*(?:\s+signed)?)?\s*)?(\[[^\]]*\])?\s*', text)
         if m is None:
-            self.statusBar().showMessage(f'"{text}" is not a valid net name', 5000)
+            self.statusBar().showMessage(f'"{text}" is not "name : type[bounds]"', 5000)
             return
-        new, bounds = m.group(1), m.group(2)
+        new, kind, bounds = m.group(1), m.group(2), m.group(3)
         sig = next((s for s in self.bd.signals if s.name == old), None)
         changed = False
+        if kind and sig is not None:
+            base, signed = kind.split()[0], kind.endswith('signed')
+            if (sig.type, sig.signed) != (base, signed):
+                sig.type, sig.signed = base, signed
+                changed = True
         if bounds is not None and sig is not None and sig.bounds != bounds:
             sig.bounds = bounds
             changed = True
@@ -2773,8 +4229,16 @@ class BdEditorWindow(QMainWindow):
 
     def _double_click(self, e):
         item = self.canvas.itemAt(e.position().toPoint())
+        if isinstance(item, EmbeddedItem) and self.scene.mode == 'select' and not self.scene.readonly:
+            self.embedded_double_click(item, self.canvas.mapToScene(e.position().toPoint()))
+            return
         if isinstance(item, InstanceItem) and self.scene.mode == 'select':
-            self.open_instance(item.obj)
+            # On a name line: edit that line in place. Elsewhere on the component: open it.
+            kind = item.name_at(self.canvas.mapToScene(e.position().toPoint()))
+            if kind and not self.scene.readonly:
+                self.edit_component_text_inline(item, kind)
+            else:
+                self.open_instance(item.obj)
             return
         FsmGraphicsView.mouseDoubleClickEvent(self.canvas, e)
 
@@ -2801,14 +4265,69 @@ class BdEditorWindow(QMainWindow):
             self.log.addItem('Generation OK - no warnings')
 
     def update_title(self):
+        """HDS title: "Project p: lib/unit/view * (Block Diagram)", the '*' right after the view
+        when there are unsaved changes; the page shown replaces "(Block Diagram)", e.g.
+        "(Signals for struct)"."""
         b = self.bd
-        ro = ' [read-only]' if self.context is not None and self.context.readonly else ''
+        ro = ' (Read-only)' if self.context is not None and self.context.readonly else ''
         proj = f'Project {self.context.project_name}: ' if self.context is not None else ''
-        self.setWindowTitle(f'{proj}{b.library}/{b.unit}/{b.view} (Block Diagram){ro}{" *" if self.dirty else ""}')
+        page = {1: f'Signals for {b.view}', 2: f'Parameters for {b.view}'}.get(
+            self.tabs.currentIndex() if hasattr(self, 'tabs') else 0, 'Block Diagram')
+        self.setWindowTitle(f'{proj}{b.library}/{b.unit}/{b.view}{" *" if self.dirty else ""}{ro} ({page})')
+
+    # -- Structure Navigator (Diagram Browser) -------------------------------------------
+    def _fill_navigator(self):
+        """The HDS Structure Navigator tree: Signal Table, Parameters Table, then the diagram
+        with its Declarations/Statements (Declarations, User Declarations, Compiler Directives)
+        and its Embedded Diagrams (one entry per embedded block)."""
+        nav = self.navigator
+        nav.clear()
+
+        def node(parent, text, target, bold=False):
+            it = QTreeWidgetItem(parent, [text])
+            it.setData(0, Qt.UserRole, target)
+            if bold:
+                f = it.font(0); f.setBold(True); it.setFont(0, f)
+            return it
+        node(nav, 'Signal Table', ('page', 1), bold=True)
+        node(nav, 'Parameters Table', ('page', 2), bold=True)
+        top = node(nav, self.bd.unit, ('page', 0), bold=True)
+        decl = node(top, 'Declarations/Statements', ('page', 3))
+        node(decl, 'Declarations', ('page', 1))
+        node(decl, 'User Declarations', ('page', 3))
+        node(decl, 'Compiler Directives', ('page', 3))
+        emb = node(top, 'Embedded Diagrams', ('page', 0))
+        for eb in sorted(self.bd.embedded, key=lambda e: e.number):
+            node(emb, eb.name, ('embedded', eb.id))
+        top.setExpanded(True)
+        self._sync_navigator()
+
+    def _navigator_clicked(self, item, _col):
+        kind, target = item.data(0, Qt.UserRole) or (None, None)
+        if kind == 'page':
+            self.tabs.setCurrentIndex(target)
+        elif kind == 'embedded':
+            # show the diagram and select / centre the embedded block
+            self.tabs.setCurrentIndex(0)
+            it = self.scene.items_by_id.get(target)
+            if it is not None:
+                self.scene.clearSelection()
+                it.setSelected(True)
+                self.canvas.centerOn(it)
+
+    def _sync_navigator(self):
+        """Highlight the navigator entry of the page shown (as HDS does)."""
+        if not hasattr(self, 'navigator'):
+            return
+        want = self.tabs.currentIndex()
+        top = self.navigator.topLevelItem({1: 0, 2: 1}.get(want, 2))
+        if top is not None:
+            self.navigator.setCurrentItem(top)
 
     def save(self):
         if self.context is not None and self.context.save(self.bd, self):
             self.dirty = False
+            self.undo_stack.mark_clean()        # undo back to here shows no '*'
             self.update_title()
 
     def generate(self):

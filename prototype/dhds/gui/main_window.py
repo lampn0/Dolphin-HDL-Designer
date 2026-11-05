@@ -3,7 +3,7 @@ from __future__ import annotations
 
 import os
 
-from PySide6.QtCore import QSettings, QSize, Qt, QTimer
+from PySide6.QtCore import QEvent, QObject, QSettings, QSize, Qt, QTimer
 from PySide6.QtGui import QAction, QActionGroup, QFont, QKeySequence
 from PySide6.QtWidgets import (QApplication, QComboBox, QDockWidget, QGraphicsItem, QFileDialog, QFormLayout, QInputDialog, QLabel,
                                QLineEdit, QListWidget, QMainWindow, QMessageBox, QPlainTextEdit,
@@ -18,7 +18,7 @@ from ..model import ENCODINGS, LANGUAGES, STATE_DECLS, FsmView, State, Transitio
 from .code_view import CodeView
 from .diagram import FsmGraphicsView, FsmScene, _BoxItem, apply_select_filter
 from .icons import icon
-from .menus import FSM_MENUS, arrange_menus
+from .menus import arrange_menus, fsm_menus
 from .toolbars import FSM_KEYS, FSM_TOOLBAR, build_toolbar
 from .props import PropertiesPanel
 from .tables import ParametersTable, SignalsTable
@@ -165,6 +165,10 @@ class MainWindow(QMainWindow):
         self.tabs.addTab(self.signals_tab, 'Signals Table')
         self.tabs.addTab(self.params_tab, 'Parameters Table')
         self.tabs.addTab(self.props_page, 'State Machine Properties')
+        # as in HDS one page at a time, reached from the Structure Navigator and the menus
+        self.tabs.tabBar().hide()
+        self.tabs.setDocumentMode(True)
+        self.tabs.currentChanged.connect(lambda _i: self.update_title())
         split = QSplitter(Qt.Horizontal)
         split.addWidget(self.tabs)
         code_box = QWidget(); cl = QVBoxLayout(code_box); cl.setContentsMargins(0, 0, 0, 0)
@@ -172,24 +176,39 @@ class MainWindow(QMainWindow):
         cl.addWidget(self.code_title); cl.addWidget(self.code)
         split.addWidget(code_box)
         split.setSizes([900, 600])
+        code_box.hide()                 # HDS has no HDL pane in the diagram window (HDL > View Generated HDL)
+        self.code_pane = code_box
         self.setCentralWidget(split)
 
         self.props = PropertiesPanel()
         dock = QDockWidget('Properties', self); dock.setWidget(self.props)
         dock.setObjectName('props')
         self.addDockWidget(Qt.LeftDockWidgetArea, dock)
-        self.nav = QTreeWidget(); self.nav.setHeaderHidden(True)
-        nav_dock = QDockWidget('Structure Navigator', self); nav_dock.setWidget(self.nav)
+        # Diagram Browser on the right with the Structure Navigator, as in HDS
+        self.nav = QTreeWidget(); self.nav.setHeaderLabel('Structure Navigator')
+        # Content (under the navigator, as in HDS): the objects of the machine by kind
+        self.content = QTreeWidget(); self.content.setHeaderLabels(['Name', 'Concurrent Machine'])
+        self.content.itemClicked.connect(self._content_clicked)
+        browser = QSplitter(Qt.Vertical)
+        browser.addWidget(self.nav)
+        cbox = QWidget(); cl2 = QVBoxLayout(cbox); cl2.setContentsMargins(0, 0, 0, 0)
+        cl2.addWidget(QLabel('Content')); cl2.addWidget(self.content)
+        browser.addWidget(cbox)
+        browser.setSizes([300, 250])
+        nav_dock = QDockWidget('Diagram Browser', self); nav_dock.setWidget(browser)
         nav_dock.setObjectName('nav')
-        self.addDockWidget(Qt.LeftDockWidgetArea, nav_dock)
-        self.splitDockWidget(nav_dock, dock, Qt.Vertical)
+        self.addDockWidget(Qt.RightDockWidgetArea, nav_dock)
+        self.nav_dock, self.props_dock = nav_dock, dock
         self.log = QListWidget(); self.log.setFont(MONO)
         log_dock = QDockWidget('Messages', self); log_dock.setWidget(self.log)
         log_dock.setObjectName('log')
         self.addDockWidget(Qt.BottomDockWidgetArea, log_dock)
+        self.log_dock = log_dock
         self.resizeDocks([log_dock], [110], Qt.Vertical)
-        self.resizeDocks([nav_dock, dock], [260, 520], Qt.Vertical)
-        self.resizeDocks([dock], [330], Qt.Horizontal)
+        self.resizeDocks([dock, nav_dock], [330, 230], Qt.Horizontal)
+        # Dolphin's own panels: kept, hidden at start so the window looks like HDS
+        dock.hide()
+        log_dock.hide()
 
         self.undo_stack = SnapshotUndo(lambda: self.view.to_json(), self._restore_snapshot, self)
         self._build_actions()
@@ -202,14 +221,22 @@ class MainWindow(QMainWindow):
         about = QAction('About Dolphin HDS', self)
         about.triggered.connect(lambda: QMessageBox.about(self, 'Dolphin HDS', 'Dolphin HDS - state machine editor'))
         self.addAction(about)
-        arrange_menus(self, FSM_MENUS)
+        self._build_menu_commands()
+        arrange_menus(self, fsm_menus(standalone=self.context is None))
+        self.statusBar().addWidget(QLabel('Ready'))      # as HDS when no message is shown
         self.regen_timer = QTimer(self); self.regen_timer.setSingleShot(True); self.regen_timer.setInterval(250)
         self.regen_timer.timeout.connect(self.regenerate)
 
         self.scene.changed_model.connect(self.model_changed)
         self.scene.selectionChanged.connect(self.on_selection)
-        self.scene.edit_requested.connect(lambda obj: self.props.show_object(obj, self.machine))
+        self.scene.edit_requested.connect(self.edit_object)
         self.scene.message.connect(lambda m: self.statusBar().showMessage(m, 5000))
+        self.scene.condition_edit_requested.connect(self.edit_condition_inline)
+        self.scene.rename_requested.connect(self.rename_state_inline)
+        self.scene.text_edit_requested.connect(self.edit_text_inline)
+        # a double-click on a declaration block: the page where its text is edited
+        self.scene.decl_edit_requested.connect(
+            lambda key: self.tabs.setCurrentWidget(self.signals_tab if key == 'status' else self.props_page))
         self.props.changed.connect(self.on_prop_changed)
         self.signals_tab.changed.connect(self.on_table_changed)
         self.params_tab.changed.connect(self.model_changed)
@@ -358,6 +385,213 @@ class MainWindow(QMainWindow):
             self.log.addItem(f'error: generated HDL line {line}: {msg}')
         self.log.addItem(f'Design rule check: {len(diags)} error(s), {len(warnings)} warning(s)')
 
+    def _build_menu_commands(self):
+        """Commands of the HDS menu bar that the toolbar does not have (File, View, Diagram,
+        Options, Window, Help), added to toolbar_actions under the keys fsm_menus() names."""
+        from PySide6.QtWidgets import QApplication, QMenu, QToolBar
+        mgr = self.context.manager if self.context is not None else None
+
+        def act(key, text, slot=None, shortcut='', checkable=False, checked=False):
+            a = QAction(text, self)
+            if shortcut:
+                a.setShortcut(QKeySequence(shortcut))
+            if checkable:
+                a.setCheckable(True); a.setChecked(checked)
+                if slot is not None:
+                    a.toggled.connect(slot)
+            elif slot is not None:
+                a.triggered.connect(slot)
+            else:
+                a.setEnabled(False)
+            self.toolbar_actions[key] = a
+            return a
+        act('page_setup', 'Page Setup...', mgr.page_setup if mgr else None)
+        act('close_window', 'Close Window', self.close)
+        act('exit', 'Exit', QApplication.instance().closeAllWindows)
+        act('refresh', 'Refresh', lambda: self.canvas.viewport().update(), 'F5')
+        act('grid', 'Grid', lambda on: (setattr(self.canvas, 'show_grid', on), self.canvas.viewport().update()),
+            checkable=True, checked=getattr(self.canvas, 'show_grid', True))
+        tb = act('toolbars', 'Toolbars', lambda: None)
+        menu = QMenu(self)
+        menu.aboutToShow.connect(lambda: (menu.clear(), [menu.addAction(t.toggleViewAction())
+                                                          for t in self.findChildren(QToolBar)]))
+        tb.setMenu(menu)
+        act('status_bar', 'Status Bar', lambda on: self.statusBar().setVisible(on), checkable=True, checked=True)
+        a = act('diagram_browser', 'Diagram Browser', lambda on: self.nav_dock.setVisible(on),
+                checkable=True, checked=True)
+        self.nav_dock.visibilityChanged.connect(a.setChecked)
+        act('signals_table', 'Signals Table', lambda: self.tabs.setCurrentWidget(self.signals_tab))
+        act('compiler_directives', 'Compiler Directives...', lambda: self.tabs.setCurrentWidget(self.props_page))
+        act('sm_props', 'State Machine Properties...', lambda: self.tabs.setCurrentWidget(self.props_page))
+        act('main_settings', 'Main...', mgr.main_settings if mgr else None)
+        act('verilog_options', 'Verilog...', mgr.verilog_options if mgr else None)
+        act('log_window', 'HDS Log Window', lambda: (self.log_dock.show(), self.log_dock.raise_()))
+        act('design_manager', 'Design Manager',
+            (lambda: (mgr.show(), mgr.raise_(), mgr.activateWindow())) if mgr else None)
+        act('shortcuts_help', 'Keyboard Shortcuts', mgr._show_shortcuts if mgr else None)
+        # F2 (edit the selected text) is in no HDS menu: keep its shortcut on the window
+        self.addAction(self.act_edit_text)
+
+    def edit_object(self, obj):
+        """Double-click on an object. States and transitions: the HDS "SM Object Properties"
+        dialog; other objects: Dolphin's Properties panel (shown when hidden)."""
+        from ..model import State, Transition
+        if isinstance(obj, (State, Transition)) and not self.scene.readonly:
+            from .sm_props_dialog import SmObjectPropertiesDialog
+            dlg = SmObjectPropertiesDialog(self.machine, [obj], self)
+            dlg.exec()
+            if dlg.applied:
+                self.scene.load(self.view, self.machine)
+                self.scene.changed_model.emit()
+            return
+        self.props.show_object(obj, self.machine)
+        self.props_dock.show()
+        self.props_dock.raise_()
+
+    def edit_text_inline(self, item, field: str):
+        """Edit one text of the diagram in place, in a box over it, as HDS does on a
+        double-click: a transition's condition / actions, a state's entry / state / exit actions,
+        a link's target, a CASE junction's expression, a clock / enable expression, a text of
+        the declaration blocks. Leaving the box (or Ctrl+Enter, Enter for one line) keeps the
+        text; Esc drops the edit."""
+        from PySide6.QtWidgets import QLineEdit, QPlainTextEdit
+        from .diagram import DeclBlockItem, JunctionItem, LinkItem, PointItem
+        view, sc = self.view, self.scene
+        if isinstance(item, DeclBlockItem):
+            target, attr = view, field
+        elif isinstance(item, PointItem):
+            target = next((s for s in view.signals if s.category == item.obj.kind), None)
+            attr = 'expression'
+            if target is None:
+                return
+        else:
+            target, attr = item.obj, field
+        multiline = not isinstance(item, (LinkItem, JunctionItem, PointItem)) and attr != 'cond'
+        old = getattr(target, attr)
+        r = item.mapToScene(item.boundingRect()).boundingRect()
+        vp = self.canvas.viewport()
+        ed = QPlainTextEdit(vp) if multiline else QLineEdit(vp)
+        ed.setFont(QFont('Arial', 9))
+        if multiline:
+            ed.setPlainText(old)
+            ed.setLineWrapMode(QPlainTextEdit.NoWrap)
+        else:
+            ed.setText(old)
+            ed.selectAll()
+        tl = self.canvas.mapFromScene(r.topLeft())
+        br = self.canvas.mapFromScene(r.bottomRight())
+        ed.setGeometry(tl.x(), tl.y(), max(160, br.x() - tl.x() + 40),
+                       max(26, br.y() - tl.y() + (40 if multiline else 4)))
+        ed.setStyleSheet('border: 1px solid #0080c0; background: white;')
+        ed.show(); ed.setFocus()
+        done = []
+
+        def finish(keep: bool):
+            if done:
+                return
+            done.append(1)
+            new = ed.toPlainText() if multiline else ed.text().strip()
+            ed.deleteLater()
+            if keep and new != old:
+                setattr(target, attr, new)
+                sc.load(view, self.machine)
+                sc.changed_model.emit()
+                self.props_page.load()
+                self.signals_tab.set_rows(view.signals)
+
+        class _Focus(QObject):
+            def eventFilter(self, obj, ev):
+                if ev.type() == QEvent.FocusOut:
+                    finish(True)
+                elif ev.type() == QEvent.KeyPress:
+                    if ev.key() == Qt.Key_Escape:
+                        finish(False)
+                        return True
+                    if ev.key() in (Qt.Key_Return, Qt.Key_Enter) and (
+                            not multiline or ev.modifiers() & Qt.ControlModifier):
+                        finish(True)
+                        return True
+                return False
+        ed._filter = _Focus(ed)
+        ed.installEventFilter(ed._filter)
+
+    def rename_state_inline(self, item):
+        """Edit a state name in place, in a box over the name (HDS: a double-click on the name).
+        Enter or leaving the box renames the state, links to it follow; Esc keeps the old name.
+        An empty name or the name of another state is refused."""
+        from PySide6.QtWidgets import QLineEdit
+        s = item.obj
+        vp = self.canvas.viewport()
+        ed = QLineEdit(vp)
+        ed.setText(s.name); ed.selectAll()
+        ed.setMinimumWidth(80); ed.adjustSize()
+        p = self.canvas.mapFromScene(item.mapToScene(item.name_rect().center()))
+        ed.move(p.x() - ed.width() // 2, p.y() - ed.height() // 2)
+        ed.show(); ed.setFocus()
+        done = []
+
+        def finish(keep: bool):
+            if done:
+                return
+            done.append(1)
+            new, old = ed.text().strip(), s.name
+            ed.deleteLater()
+            if not keep or not new or new == old:
+                return
+            if any(o.name == new for o in self.machine.states if o is not s):
+                self.statusBar().showMessage(f'A state named {new} already exists', 5000)
+                return
+            item.prepareGeometryChange()            # the circle grows with the name
+            s.name = new
+            for lk in self.machine.links:
+                if lk.target == old:
+                    lk.target = new
+            self.scene.load(self.view, self.machine)
+            self.scene.changed_model.emit()
+
+        ed.returnPressed.connect(lambda: finish(True))
+        ed.editingFinished.connect(lambda: finish(True))
+        esc = QAction(ed); esc.setShortcut(QKeySequence('Esc')); esc.setShortcutContext(Qt.WidgetShortcut)
+        esc.triggered.connect(lambda: finish(False))
+        ed.addAction(esc)
+
+    def edit_condition_inline(self, t):
+        """Type the condition of a new transition in place, in a box at the middle of the
+        transition, as HDS 2021.1 opens one when a transition is drawn. Enter or leaving the
+        box keeps the text; Esc leaves the condition empty."""
+        from PySide6.QtWidgets import QLineEdit
+        it = self.scene.trans_items.get(t.id)
+        if it is None:
+            return
+        path = it.path()
+        mid = it.mapToScene(path.pointAtPercent(0.5)) if path.length() > 0 else it.scenePos()
+        vp = self.canvas.viewport()
+        ed = QLineEdit(vp)
+        ed.setPlaceholderText('value')                  # the hint HDS shows in its box
+        ed.setText(t.cond)
+        ed.setMinimumWidth(120)
+        ed.adjustSize()
+        p = self.canvas.mapFromScene(mid)
+        ed.move(p.x() - ed.width() // 2, p.y() - ed.height() // 2)
+        ed.show(); ed.setFocus()
+        done = []
+
+        def finish(keep: bool):
+            if done:
+                return
+            done.append(1)
+            if keep and ed.text().strip() != t.cond:
+                t.cond = ed.text().strip()
+                self.scene.refresh_transitions_from(t.src)
+                self.scene.changed_model.emit()
+            ed.deleteLater()
+
+        ed.returnPressed.connect(lambda: finish(True))
+        ed.editingFinished.connect(lambda: finish(True))
+        esc = QAction(ed); esc.setShortcut(QKeySequence('Esc')); esc.setShortcutContext(Qt.WidgetShortcut)
+        esc.triggered.connect(lambda: finish(False))
+        ed.addAction(esc)
+
     def edit_selection(self, focus_text: bool = False):
         """Alt+Enter / F2: show the selected object in the Properties panel."""
         sel = self.scene.selectedItems()
@@ -423,8 +657,20 @@ class MainWindow(QMainWindow):
         return self.path or ''
 
     def _restore_view_position(self):
-        if not self.canvas.restore(load_view_state(self._view_key())):
-            self.canvas.fit()
+        """Open where the user left the diagram: Dolphin's own saved view first, then the view
+        area HDS saved for the machine (at HDS's 100%, which is a zoom of 75/72 here, from its
+        top-left corner), else the whole diagram."""
+        if self.canvas.restore(load_view_state(self._view_key())):
+            return
+        va = self.machine.view_area if self.machine is not None else None
+        if va:
+            k = 75 / 72
+            self.canvas.resetTransform()
+            self.canvas.scale(k, k)
+            vp = self.canvas.viewport()
+            self.canvas.centerOn(va[0] + vp.width() / (2 * k), va[1] + vp.height() / (2 * k))
+            return
+        self.canvas.fit()
 
     def _save_view_position(self):
         save_view_state(self._view_key(), self.canvas.state())
@@ -445,7 +691,8 @@ class MainWindow(QMainWindow):
         self.sync_toolbar()
         self.build_nav()
         self.canvas.restore(st)
-        self.dirty = True
+        # back on the saved state (e.g. undo of every edit since the last save): no '*'
+        self.dirty = not self.undo_stack.is_clean(text)
         self.update_title()
         self.regen_timer.start()
 
@@ -483,6 +730,10 @@ class MainWindow(QMainWindow):
             it = QTreeWidgetItem(machines, [m.name]); it.setData(0, Qt.UserRole, 'diagram')
             for s in m.states:
                 QTreeWidgetItem(it, [s.name]).setData(0, Qt.UserRole, ('state', s.id))
+        self.build_content()
+        for k in range(self.nav.topLevelItemCount()):        # HDS shows the top entries in bold
+            it = self.nav.topLevelItem(k)
+            f = it.font(0); f.setBold(True); it.setFont(0, f)
         self.nav.expandToDepth(1)
 
     def on_nav(self, item, col):
@@ -503,12 +754,44 @@ class MainWindow(QMainWindow):
                 self.canvas.centerOn(it)
 
     # -- change handling ------------------------------------------------------------
+    def build_content(self):
+        """The Content pane: one group per kind of object of the machine, "(Items: n)", with
+        the objects under it (name, machine), as HDS lists them. Only kinds present are shown."""
+        if not hasattr(self, 'content'):
+            return
+        self.content.clear()
+        m = self.machine
+        if m is None:
+            return
+        # the kinds HDS 2021.1 lists there (junctions, links, recovery and interrupt points are
+        # not listed; HDS also lists comment texts, which Dolphin's state diagrams do not have)
+        groups = [('state', [(s.name, s.id) for s in m.states])]
+        for kind in ('clock', 'reset', 'enable'):
+            groups.append((kind, [(p.kind, p.id) for p in m.points if p.kind == kind]))
+        for kind, objs in groups:
+            if not objs:
+                continue
+            top = QTreeWidgetItem(self.content, [f'(Items: {len(objs)})', ''])
+            top.setIcon(0, icon(kind))
+            for name, oid in objs:
+                QTreeWidgetItem(top, [name, m.name]).setData(0, Qt.UserRole, oid)
+
+    def _content_clicked(self, item, _col):
+        oid = item.data(0, Qt.UserRole)
+        if oid:
+            it = self.scene.item_for(oid)
+            if it is not None:
+                self.tabs.setCurrentWidget(self.canvas)
+                self.scene.clearSelection(); it.setSelected(True)
+                self.canvas.centerOn(it)
+
     def model_changed(self):
         if self._once and self.scene.mode != 'select' and self.scene._pending_src is None:
             self._once = False
             QTimer.singleShot(0, lambda: self.set_mode('select'))
         self.dirty = True
         self.update_title()
+        self.build_content()
         self.regen_timer.start()
         self.undo_stack.note_change()
         self._update_undo_actions()
@@ -553,9 +836,11 @@ class MainWindow(QMainWindow):
         v = self.view
         star = ' *' if self.dirty else ''
         if self.context is not None:
-            ro = ' [read-only]' if self.context.readonly else ''
+            # HDS: "Project p: lib/unit/view [machine] (Read-only) (State Diagram)"; the '*' is
+            # put after the names as in the block diagram title
+            ro = ' (Read-only)' if self.context.readonly else ''
             self.setWindowTitle(f'Project {self.context.project_name}: {v.library}/{v.unit}/{v.view} '
-                                f'[{self.machine.name}] (State Diagram){ro}{star}')
+                                f'[{self.machine.name}]{star}{ro} (State Diagram)')
             return
         name = os.path.basename(self.path) if self.path else 'untitled'
         self.setWindowTitle(f'Dolphin HDS (prototype) — {v.library}/{v.unit}/{v.view} '
@@ -612,25 +897,47 @@ class MainWindow(QMainWindow):
                 lib, _, unit = text.strip().rpartition('.')
                 lib = lib or 'work'
             view = import_sm(path, library=lib, unit=unit)
-            self.load_view(view, None)
-            self.dirty = True
-            self.update_title()
-            self.statusBar().showMessage(f'Imported {path}', 5000)
+            self.load_view(view, path)          # saved back to the same .sm (HDS reads it too)
+            self.statusBar().showMessage(f'Opened {path}', 5000)
         else:
             self.load_view(FsmView.load(path), path)
 
     def save_file(self):
         if self.context is not None:
-            if self.context.save(self.view, self):
+            if self.context.save(self.view, self, geometry=self.scene.hds_geometry):
+                if self.context.view.legacy and self.context.view.path.endswith('.sm'):
+                    self._reload_scene()
                 self.dirty = False
+                self.undo_stack.mark_clean()    # undo back to here shows no '*'
                 self.update_title()
             return
         if not self.path:
             return self.save_as()
-        self.view.save(self.path)
+        if self.path.endswith('.sm'):
+            # an HDS state diagram opened as a file: written back to it (HDS reads it too)
+            from ..hds.export_sm import export_sm
+            warn = export_sm(self.view, self.path, self.path, self.scene.hds_geometry)
+            if warn:
+                QMessageBox.warning(self, 'Saved with omissions',
+                                    'Saved to the HDS file, but these changes could not be written yet:\n\n'
+                                    + '\n'.join(warn[:15]))
+            self._reload_scene()
+        else:
+            self.view.save(self.path)
         self.dirty = False
+        self.undo_stack.mark_clean()
         self.update_title()
         self.statusBar().showMessage(f'Saved {self.path}', 4000)
+
+    def _reload_scene(self):
+        """After saving to an HDS .sm: the objects added in Dolphin now have the ids of their
+        labels in the file (dhds.hds.export_sm), so the scene is built again on them; the view
+        stays where it is."""
+        gv = self.scene.views()[0] if self.scene.views() else None
+        center = gv.mapToScene(gv.viewport().rect().center()) if gv is not None else None
+        self.scene.load(self.view, self.machine)
+        if gv is not None:
+            gv.centerOn(center)
 
     def save_as(self):
         path, _ = QFileDialog.getSaveFileName(self, 'Save state machine',

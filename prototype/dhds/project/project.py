@@ -208,8 +208,15 @@ def _graphic_views(udir: str) -> list[View]:
                 name = f[:-len(ext)]
                 key = (name, kind)
                 legacy = not ext.endswith('.json')
-                # the tool's own .json file wins over a legacy file of the same view
-                if key not in found or (found[key].legacy and not legacy):
+                # a view with both an HDS file and this tool's .json: a state diagram is
+                # saved back to its .sm (both tools edit the same file), so the one saved
+                # last is the view; for other kinds the tool's own .json wins
+                if key not in found:
+                    found[key] = View(name, kind, label, p, '', legacy)
+                elif kind == 'fsm' and found[key].legacy != legacy:
+                    if os.path.getmtime(p) > os.path.getmtime(found[key].path):
+                        found[key] = View(name, kind, label, p, '', legacy)
+                elif found[key].legacy and not legacy:
                     found[key] = View(name, kind, label, p, '', legacy)
                 break
     order = {'fsm': 0, 'bd': 0, 'other': 1, 'symbol': 2}

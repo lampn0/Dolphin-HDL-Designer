@@ -6,9 +6,15 @@ symbol order, sorted by instance name), embedded text blocks.
 """
 from __future__ import annotations
 
+import re
+
 from ..bd_model import BlockDiagram
 from ..model import Signal
 from .common import IND, drivers, port_lines, sv_net_type, text_lines
+
+# ModuleWare gates: operator between the inputs, and whether the result is inverted
+_MW_OPS = {'and': ('&', False), 'or': ('|', False), 'xor': ('^', False), 'nand': ('&', True),
+           'nor': ('|', True), 'xnor': ('^', True), 'inv': ('', True), 'buff': ('', False), 'assignment': ('', False)}
 
 
 class BdGenerator:
@@ -54,8 +60,9 @@ class BdGenerator:
             if s.signed:
                 t += ' signed'
             types[s.name] = t
-        wt = max(6, max(len(t) + 1 for t in types.values()))
-        wb = max(len(s.bounds) for s in nets) + 1
+        wt = max(6, max(len(t) + 2 for t in types.values()))   # longest type + 2, as HDS
+        bounds = {s.name: _bounds(s.bounds) for s in nets}
+        wb = max(len(b) for b in bounds.values()) + 1
         extra = any(s.array or s.value or s.delay for s in nets)
         wname = max(len(s.name) for s in nets) + 2
         out = []
@@ -67,7 +74,8 @@ class BdGenerator:
             else:
                 tail = s.name
             # Verilog order: type [range] [#delay] name
-            head = f'{s.bounds + " " if s.bounds else ""}{delay}' if delay else f'{s.bounds:<{wb}}'
+            b = bounds[s.name]
+            head = f'{b + " " if b else ""}{delay}' if delay else f'{b:<{wb}}'
             line = f'{types[s.name]:<{wt}}{head}{tail};'
             if s.comment:
                 width = wt + wb + (wname + 12 if extra else max(len(n.name) + 1 for n in nets) + 3)
@@ -75,7 +83,22 @@ class BdGenerator:
             out.append(line)
         return out
 
+    def _moduleware(self, inst) -> list[str]:
+        """ModuleWare gate: one continuous assignment from its inputs (din0, din1...) to dout."""
+        ins = [p.net for p in sorted(inst.pins, key=lambda p: p.name) if p.mode != 'output' and p.net]
+        out = next((p.net for p in inst.pins if p.mode == 'output' and p.net), '')
+        op = _MW_OPS.get(inst.unit)
+        if op is None or not out or not ins:
+            self.warnings.append(f'{inst.name}: ModuleWare {inst.unit} is not generated')
+            return [f"// ModuleWare {inst.unit} '{inst.name}' not generated"]
+        sym, invert = op
+        expr = f' {sym} '.join(ins) if sym else ins[0]
+        return [f"// ModuleWare code for instance '{inst.name}' of '{inst.unit}'",
+                f'assign {out} = {"~(" + expr + ")" if invert else expr};']
+
     def _instance(self, inst, array: str = '') -> list[str]:
+        if inst.library == 'moduleware':
+            return self._moduleware(inst)
         known = {s.name for s in self.bd.signals}
         head = inst.unit
         if inst.params:
@@ -88,7 +111,7 @@ class BdGenerator:
         w = max((len(p.name) for p in pins), default=0) + 1
         for i, p in enumerate(pins):
             sep = ', ' if i < len(pins) - 1 else ''
-            actual = p.net or explicit.get(p.name, '')
+            actual = (p.net + p.slice) if p.net else explicit.get(p.name, '')
             out.append(f'{IND}.{p.name:<{w}}({actual}){sep}')
             if p.net and p.net.split('[')[0] not in known:
                 self.warnings.append(f'{inst.name}.{p.name}: net "{p.net}" is not declared')
@@ -100,18 +123,30 @@ class BdGenerator:
     def _instances(self) -> list[str]:
         """Instances outside frames, and instance arrays for those in a FOR frame
         (as the legacy tool writes them: unit inst[left:right](...))."""
+        # HDS 2024.2 order (checked on every diagram of a real project): the instances outside
+        # frames sorted by library, then component, then instance name; then the instance arrays
+        # of the FOR frames in frame number order. The array range is the frame text as typed
+        # ("[ N - 1 : 0 ]" keeps its spaces).
+        key = lambda i: (i.library, i.unit, i.name)  # noqa: E731
         out = []
-        for inst in sorted(self.bd.instances, key=lambda i: i.name):
-            frame = self.bd.frame_of(inst)
-            if frame is not None and frame.kind != 'for':
-                continue
-            array = '[{}:{}]'.format(*frame.range()) if frame is not None else ''
-            out += self._instance(inst, array) + ['']
+        for inst in sorted((i for i in self.bd.instances if self.bd.frame_of(i) is None), key=key):
+            out += self._instance(inst) + ['']
+        framed = [(self.bd.frame_of(i), i) for i in self.bd.instances if self.bd.frame_of(i) is not None]
+        for frame, inst in sorted(framed, key=lambda fi: (fi[0].number, key(fi[1]))):
+            if frame.kind == 'for':
+                spec = frame.spec.strip()
+                array = spec if spec.startswith('[') and spec.endswith(']') else '[{}:{}]'.format(*frame.range())
+                out += self._instance(inst, array) + ['']
         return out
 
     @staticmethod
     def _embedded(eb, indent: str = '') -> list[str]:
-        return [f'{indent}// HDL Embedded Text Block {eb.number} {eb.name}'] + [indent + l for l in text_lines(eb.text)]
+        # HDS drops one line break at the start of the text and all at its end: a text that
+        # starts with an empty line ("\n\n// ...") is written with that empty line (HDS 2024.2)
+        text = eb.text.rstrip('\n')
+        text = text[1:] if text.startswith('\n') else text
+        lines = text.split('\n') if text.strip() else []
+        return [f'{indent}// HDL Embedded Text Block {eb.number} {eb.name}'] + [indent + l for l in lines]
 
     def _frame_body(self, frame, indent: str) -> list[str]:
         out = []
@@ -184,19 +219,47 @@ class BdGenerator:
         lines += [');', '']
         if bd.post_module_directives.strip():
             lines += bd.post_module_directives.rstrip('\n').split('\n')
-        lines += ['// Internal Declarations', '', '', '// Local declarations', '', '// Internal signal declarations']
+        lines += ['// Internal Declarations', '', '', '// Local declarations']
+        # user text of the Declarations block: "Pre User" before the signals, "Post User" after
+        # them (Post User placement checked against HDS 2024.2 output; Pre User not yet seen)
+        if bd.pre_user_declarations.strip():
+            lines += bd.pre_user_declarations.strip('\n').split('\n')
+        lines += ['', '// Internal signal declarations']
         lines += self._internal()
-        lines += ['', '', '// Instances ']
+        lines += ['', '']
+        if bd.post_user_declarations.strip():
+            lines += bd.post_user_declarations.strip('\n').split('\n') + ['']
+        lines += ['// Instances ']
         lines += self._instances()
         lines += self._if_frames()
-        for eb in sorted(bd.embedded, key=lambda e: e.number):
-            if bd.frame_of(eb) is None:
-                lines += self._embedded(eb) + ['']
+        top_embedded = [eb for eb in sorted(bd.embedded, key=lambda e: e.number) if bd.frame_of(eb) is None]
+        # consecutive embedded blocks follow each other without an empty line; one empty line
+        # comes after the last one (HDS 2024.2)
+        for eb in top_embedded:
+            lines += self._embedded(eb)
+        if top_embedded:
+            lines.append('')
         lines += self._for_embedded()
-        if bd.end_module_directives.strip():
+        if not top_embedded:
+            # HDS 2024.2 (checked against its batch generation): with no embedded block outside
+            # the frames, one more empty line comes before endmodule
+            lines.append('')
+        lines.append(f'endmodule // {bd.unit}')
+        if bd.end_module_directives.strip():            # after the endmodule keyword (HDS user manual)
             lines += bd.end_module_directives.rstrip('\n').split('\n')
-        lines += [f'endmodule // {bd.unit}', '', '']
+        lines += ['', '']
         return '\n'.join(lines)
+
+
+def _bounds(text: str) -> str:
+    """Bounds as HDS writes them in declarations.
+
+    HDS rewrites only bounds in its own spaced style, "[ msb : lsb ]" -> "[msb:lsb]"; any other
+    spelling is written as typed (both checked against HDS 2024.2: "[ N - 1 : 0 ]" becomes
+    "[N - 1:0]" but "[ N - 1 : 0]" stays as it is).
+    """
+    m = re.fullmatch(r'\[ (\S.*?) : (\S.*?) \]', text)
+    return f'[{m.group(1)}:{m.group(2)}]' if m else text
 
 
 def _port_map(text: str) -> dict[str, str]:

@@ -11,6 +11,7 @@ import unittest
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
 
+from dhds.codegen import fsm_codegen  # noqa: E402
 from dhds.codegen.encoding import encode  # noqa: E402
 from dhds.codegen.fsm_codegen import assignment_target, generate, split_statements  # noqa: E402
 from dhds.examples import traffic_light  # noqa: E402
@@ -71,8 +72,13 @@ class TestExample(unittest.TestCase):
 @unittest.skipUnless(os.path.exists(SM) and os.path.exists(GOLDEN), 'legacy samples not found')
 class TestLegacyGolden(unittest.TestCase):
     def test_body_matches_legacy_tool(self):
+        # the legacy golden was generated with "Allow implicit event expression (@*)" set
         view = import_sm(SM, library='protocol_controller', unit='gc_control_fsm')
-        text, warnings = generate(view, 'verilog')
+        saved, fsm_codegen.IMPLICIT_EVENT = fsm_codegen.IMPLICIT_EVENT, True
+        try:
+            text, warnings = generate(view, 'verilog')
+        finally:
+            fsm_codegen.IMPLICIT_EVENT = saved
         self.assertEqual(warnings, [])
         with open(GOLDEN, encoding='utf-8') as f:
             golden = f.read()

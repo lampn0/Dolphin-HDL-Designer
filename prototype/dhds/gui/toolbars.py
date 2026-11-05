@@ -58,13 +58,16 @@ COMMON_KEYS = {
 }
 FSM_KEYS = {
     **COMMON_KEYS, 'state': ['F3', 'S'], 'hier_state': ['Shift+F2', 'H'], 'interrupt': ['I'],
-    'link': ['F4', 'L'], 'junction_if': ['J'], 'transition': ['F7', 'T'], 'wait_state': ['F8', 'W'],
+    'link': ['F4', 'L'], 'junction_if': ['J'], 'transition': ['F7', 'T'],
+    'wait_state': ['Ctrl+F3', 'W'],          # as HDS 2021.1 shows it in Add (F8 is Input Port there)
 }
 BD_KEYS = {
     **COMMON_KEYS, 'block': ['Ctrl+F3', 'B'], 'component': ['F3', 'C'], 'embedded': ['F4', 'E'],
     'wire': ['F7', 'S'], 'bus': ['Shift+F7', 'U'], 'bundle': ['Ctrl+F7', 'N'], 'port_in': ['F8', 'I'],
-    'port_out': ['F9', 'O'], 'port_inout': ['F11', 'T'], 'port_buffer': ['F12', 'F'],
-    'global_connector': ['F5', 'G'], 'frame': ['F6'], 'frame_if': ['Shift+F6'], 'frame_else': ['Alt+F6'],
+    # Port Out / Port InOut keys as HDS 2021.1 shows them in its Add menu; Global Connector has
+    # no function key there (F5 is View > Refresh)
+    'port_out': ['Shift+F8', 'O'], 'port_inout': ['F9', 'T'], 'port_buffer': ['F'],
+    'global_connector': ['G'], 'frame': ['F6'], 'frame_if': ['Shift+F6'], 'frame_else': ['Alt+F6'],
     'add_stubs': ['Ctrl+F10'], 'add_stubs_ports': ['Shift+F10'], 'disconnect': ['Shift+Alt+C'],
     'open_down': ['Ctrl+D'],
 }

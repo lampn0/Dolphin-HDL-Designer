@@ -1,6 +1,7 @@
 """Design Manager: project/library browser and launcher for the editors."""
 from __future__ import annotations
 
+import json
 import os
 import shlex
 import subprocess
@@ -22,7 +23,7 @@ from ..project.generate import GenResult, load_view, native_path
 from ..project.project import DesignUnit, Library, Project, View, create_project, open_project
 from ..project.templates import new_fsm, new_module
 from .bd_editor import BdEditorWindow
-from .dm_icons import ROOT_TEXT, dm_icon, library_icon, tree_icon, unit_icon, view_icon
+from .dm_icons import ROOT_TEXT, dm_icon, library_icon, project_icon, tree_icon, unit_icon, view_icon
 from .context import EditorContext, generate_with_prompt
 from .menus import DM_MENUS, arrange_menus
 from .dialogs import NewLibraryDialog, NewProjectDialog, NewUnitDialog, PreferencesDialog
@@ -108,10 +109,6 @@ class LibraryExplorer(QWidget):
         main.setSizes([800, 650])
         lay = QVBoxLayout(self)
         lay.setContentsMargins(0, 0, 0, 0)
-        self.banner = QLabel()
-        self.banner.setStyleSheet('color: #a00000')
-        self.banner.setWordWrap(True)
-        lay.addWidget(self.banner)
         lay.addWidget(main)
         self.refresh()
 
@@ -128,8 +125,8 @@ class LibraryExplorer(QWidget):
             msgs.append(f'{lib.unparsed_count()} file(s) not parsed (see the Files pane)')
         if not HAVE_SLANG:
             msgs.append('pyslang is not installed: ports/instances are not read from HDL files')
-        self.banner.setText('\n'.join(msgs))
-        self.banner.setVisible(bool(msgs))
+        for m in msgs:                              # scan problems go to the log, the panes stay at the top
+            self.dm.log(f'{lib.name}: {m}', 'warning')
         self._fill_units()
         self._fill_files()
         self._fill_hierarchy()
@@ -325,7 +322,7 @@ class LibraryExplorer(QWidget):
                           + ' (library not mapped or unit missing)')
             for c in range(5):
                 it.setForeground(c, RED)
-        elif self.dm.children_of(du):
+        elif self.dm.may_have_children(du):          # the diagram is read when the row opens
             it.setChildIndicatorPolicy(QTreeWidgetItem.ShowIndicator)
             it.setData(1, Qt.UserRole, 'unexpanded')
         return it
@@ -529,6 +526,7 @@ class DesignManager(QMainWindow):
         self.editors: dict[str, QMainWindow] = {}
         self.explorers: dict[str, LibraryExplorer] = {}
         self.view_cache: dict[tuple[str, float], list] = {}
+        self._load_hier_cache()
 
         self.tabs = QTabWidget()
         self.tabs.setTabsClosable(True)
@@ -603,7 +601,6 @@ class DesignManager(QMainWindow):
     def _build_actions(self):
         """Menu bar of the legacy Design Manager. Entries Dolphin HDS does not offer are greyed;
         entries that need a selection (`when`) are enabled from the current selection."""
-        side: list[QAction] = []        # commands listed on the Explore page of the left bar
         mb = self.menuBar()
         self._when: list[tuple[QAction, str]] = []
 
@@ -640,7 +637,7 @@ class DesignManager(QMainWindow):
         # File
         fm = mb.addMenu('&File')
         new = fm.addMenu('&New')
-        item(new, '&Design Content...', self.new_unit, QKeySequence.New, to=side, when='project')
+        item(new, '&Design Content...', self.new_unit, QKeySequence.New, when='project')
         reg = new.addMenu('&Registered View')
         for name, entries in REGISTERED_VIEWS:
             if isinstance(entries, list):
@@ -650,21 +647,21 @@ class DesignManager(QMainWindow):
             else:
                 item(reg, name, lambda checked=False, n=name, e=entries: self.new_registered_view(n, e),
                      when='project')
-        self.act_new_project = item(new, '&Project...', self.new_project, to=side)
-        item(new, '&Library...', self.new_library, to=side, when='project')
+        self.act_new_project = item(new, '&Project...', self.new_project)
+        item(new, '&Library...', self.new_library, when='project')
         item(new, '&Test Bench...')
         sub(fm, '&Add', [('&Existing Design...', self.new_library, 'project'),
                          ('Existing &Files...', self.add_existing_files, 'lib'), '&Gate Level...'])
         op = fm.addMenu('&Open')
         item(op, '&Design Content', lambda: self._with_unit(self.open_unit), when='unit')
-        item(op, '&Project...', self.open_project_dialog, QKeySequence.Open, to=side)
+        item(op, '&Project...', self.open_project_dialog, QKeySequence.Open)
         cl = fm.addMenu('&Close')
         item(cl, '&Current Design Explorer', lambda: self._close_tab(self.tabs.currentIndex()), when='explorer')
         item(cl, '&All Design Explorers', self.close_explorers, when='project')
         item(cl, 'All &Editor Windows', self.close_editors)
-        item(cl, 'Close &Project', self.close_project, to=side)
+        item(cl, 'Close &Project', self.close_project)
         fm.addSeparator()
-        item(fm, '&Explore Library', lambda: self.explore(self._selected_lib()), to=side, when='lib')
+        item(fm, '&Explore Library', lambda: self.explore(self._selected_lib()), when='lib')
         fm.addSeparator()
         item(fm, 'Page Set&up...', self.page_setup)
         item(fm, '&Print...', None, 'Ctrl+P')
@@ -720,7 +717,7 @@ class DesignManager(QMainWindow):
 
         # View
         vm = mb.addMenu('&View')
-        item(vm, '&Refresh', self.refresh, 'F5', to=side)
+        item(vm, '&Refresh', self.refresh, 'F5')
         item(vm, 'Reload &Library', self.reload_all, 'Shift+F5', when='explorer')
         vm.addSeparator()
         item(vm, '&Status Bar', lambda on: self.statusBar().setVisible(on), checkable=True, checked=True)
@@ -806,7 +803,7 @@ class DesignManager(QMainWindow):
 
         # Options
         om = mb.addMenu('O&ptions')
-        item(om, '&Main...', self.main_settings, to=side)
+        item(om, '&Main...', self.main_settings)
         item(om, '&VHDL...')
         item(om, 'V&erilog...', self.verilog_options)
         for text in ('Documentation && Visualization...', 'Design Management...', 'Version Management...',
@@ -840,7 +837,7 @@ class DesignManager(QMainWindow):
         hp.addSeparator()
         item(hp, '&About Dolphin HDS', lambda: QMessageBox.about(
             self, 'Dolphin HDS', 'Dolphin HDS prototype\nHDL design management, generation and maintenance.'))
-        self._build_left_bar(side)
+        self._build_left_bar()
         for m in mb.findChildren(QMenu):
             m.aboutToShow.connect(self._update_menu_states)
         for w in (self.tabs, ):
@@ -1119,9 +1116,9 @@ class DesignManager(QMainWindow):
         else:
             self._autosave_timer.stop()
 
-    def _build_left_bar(self, explore_actions: list[QAction]):
-        """Left bar as in the legacy Design Manager: a Main page of large launcher
-        buttons, plus Explore and Tasks pages, switched by the buttons at the bottom."""
+    def _build_left_bar(self):
+        """Left bar as in the legacy Design Manager: the Project page of project commands while the
+        Project tab is current, the Main page of large launcher buttons with a library tab."""
         stack = QStackedWidget()
 
         def page(buttons) -> QWidget:
@@ -1165,42 +1162,33 @@ class DesignManager(QMainWindow):
             launcher('launch_svassistant', 'SVAssistant'),
         ])
 
-        def text_buttons(actions):
-            out = []
-            for a in actions:
-                b = QToolButton(); b.setDefaultAction(a); b.setToolButtonStyle(Qt.ToolButtonTextOnly)
-                b.setFixedWidth(118); out.append(b)
-            return out
-
-        explore = page(text_buttons(explore_actions))
-        tasks_actions = []
-        for text, slot in (('Generate selected', self.generate_selected),
-                           ('Generate whole library', self.generate_current_library),
-                           ('View HDL', self.open_selected_hdl), ('Check selected', self.check_selected)):
-            a = QAction(text, self); a.triggered.connect(slot); tasks_actions.append(a)
-        tasks = page(text_buttons(tasks_actions))
         def project_button(icon_name: str, text: str, slot=None):
             b = QToolButton(); b.setText(text); b.setToolButtonStyle(Qt.ToolButtonTextBesideIcon)
-            b.setIcon(dm_icon(icon_name) if icon_name else QIcon()); b.setIconSize(QSize(16, 16))
-            b.setAutoRaise(True); b.setFixedWidth(118)
+            b.setIcon(project_icon(icon_name)); b.setIconSize(QSize(24, 24))
+            b.setAutoRaise(True); b.setFixedWidth(120)
             if slot is None:
                 b.setEnabled(False); b.setToolTip('Not available in Dolphin HDS yet')
             else:
                 b.clicked.connect(slot)
             return b
         project = page([
-            project_button('library', 'New Project...', self.new_project),
-            project_button('folder', 'Open Project...', self.open_project_dialog),
-            project_button('library', 'New Library...', self.new_library),
-            project_button('', 'Edit\nMappings...'),
-            project_button('', 'Set As Default', self._set_default_library),
-            project_button('folder', 'Explore Library', lambda: self.explore(self._selected_lib())),
-            project_button('file_hdl', 'New / Add...', self.new_unit),
-            project_button('', 'Version\nManagement...'),
-            project_button('', 'Close Project', self.close_project),
+            project_button('new_project', 'New Project...', self.new_project),
+            project_button('open_project', 'Open\nProject...', self.open_project_dialog),
+            project_button('new_library', 'New Library...', self.new_library),
+            project_button('edit_mappings', 'Edit\nMappings...'),
+            project_button('set_default', 'Set As\nDefault', self._set_default_library),
+            project_button('explore_library', 'Explore\nLibrary', lambda: self.explore(self._selected_lib())),
+            project_button('new_add', 'New / Add...', self.new_unit),
+            project_button('version', 'Version\nManagement...'),
+            project_button('close_project', 'Close Project', self.close_project),
         ])
+        project.setObjectName('project_page_bar')
+        project.setStyleSheet('#project_page_bar { background:#707070; } '
+                              'QToolButton { color:white; text-align:left; } '
+                              'QToolButton:disabled { color:#b8b8b8; } '
+                              'QToolButton:hover { background:#858585; }')
         self.launch_pad = main
-        for w in (main, explore, tasks, project):
+        for w in (main, project):                   # Main goes with a library tab, Project with the Project tab
             stack.addWidget(w)
 
         box = QWidget(); bl = QVBoxLayout(box); bl.setContentsMargins(0, 0, 0, 0); bl.setSpacing(0)
@@ -1208,11 +1196,6 @@ class DesignManager(QMainWindow):
         self.left_title.setStyleSheet('background:#c8c8c8; padding:3px; border-bottom:1px solid #999;')
         bl.addWidget(self.left_title)
         bl.addWidget(stack, 1)
-        for k, name in enumerate(('Main', 'Explore', 'Tasks')):
-            b = QPushButton(name); b.setFlat(True)
-            b.setStyleSheet('background:#d8d8d8; border-top:1px solid #999; padding:3px;')
-            b.clicked.connect(lambda checked=False, k=k, n=name: (stack.setCurrentIndex(k), self.left_title.setText(n)))
-            bl.addWidget(b)
         self.left_pages = stack
         self.tabs.currentChanged.connect(self._left_page_for_tab)
         dock = QDockWidget('Shortcuts', self)
@@ -1223,11 +1206,12 @@ class DesignManager(QMainWindow):
         dock.setWidget(box)
         box.setFixedWidth(128)
         self.addDockWidget(Qt.LeftDockWidgetArea, dock)
+        self._left_page_for_tab(self.tabs.currentIndex())
 
     def _left_page_for_tab(self, index: int):
         """The Project page goes with the Project tab, the Main page with a library tab."""
         on_project = self.tabs.widget(index) is self.project_page
-        self.left_pages.setCurrentIndex(3 if on_project else 0)
+        self.left_pages.setCurrentIndex(1 if on_project else 0)
         self.left_title.setText('Project' if on_project else 'Main')
 
     def _set_default_library(self):
@@ -1328,6 +1312,7 @@ class DesignManager(QMainWindow):
         except Exception as e:
             QMessageBox.critical(self, 'Open project', f'Cannot open {path}:\n{e}')
             return
+        self.project.cache.update(self._load_hdl_cache())
         self.prefs.add_recent(path)
         self.log(f'Opened project {path} ({len(self.project.libraries)} libraries)')
         for err in self.project.errors:
@@ -1343,9 +1328,35 @@ class DesignManager(QMainWindow):
         while self.tabs.count() > 1:
             self.tabs.removeTab(1)
         self.explorers.clear()
+        if self.project is not None:
+            self._save_hdl_cache()
         self.project = None
         self.fill_project()
         return True
+
+    # parsed HDL files of the project, kept between sessions: a file is parsed again when its time changes
+    @staticmethod
+    def _hdl_cache_path() -> str:
+        return os.path.join(os.path.dirname(Prefs.path()), 'hdl_cache.pickle')
+
+    def _load_hdl_cache(self) -> dict:
+        import pickle
+        try:
+            with open(self._hdl_cache_path(), 'rb') as f:
+                data = pickle.load(f)
+            return data if isinstance(data, dict) else {}
+        except Exception:                           # missing, or written by another version
+            return {}
+
+    def _save_hdl_cache(self):
+        import pickle
+        try:
+            tmp = self._hdl_cache_path() + '.tmp'
+            with open(tmp, 'wb') as f:
+                pickle.dump(self.project.cache, f, protocol=pickle.HIGHEST_PROTOCOL)
+            os.replace(tmp, self._hdl_cache_path())
+        except Exception:
+            pass                                    # only a cache
 
     def fill_project(self):
         self.update_title()
@@ -1473,23 +1484,64 @@ class DesignManager(QMainWindow):
 
     def refresh(self):
         self.view_cache.clear()
+        self._hier_disk.clear()
+        if self.project is not None:
+            self.project.cache.clear()              # View > Refresh reads everything again from disk
         for ex in self.explorers.values():
             ex.refresh()
         self.log('Refreshed')
 
     # -- hierarchy ------------------------------------------------------------------------
+    @staticmethod
+    def _hier_cache_path() -> str:
+        # the name changes when what is cached changes (v2: ModuleWare gates left out)
+        return os.path.join(os.path.dirname(Prefs.path()), 'hier_cache_v2.json')
+
+    def _load_hier_cache(self):
+        """Instances of the block diagrams read before: path -> [mtime, children]."""
+        try:
+            with open(self._hier_cache_path(), encoding='utf-8') as f:
+                self._hier_disk: dict[str, list] = json.load(f)
+        except (OSError, ValueError):
+            self._hier_disk = {}
+
+    def _save_hier_cache(self):
+        try:
+            os.makedirs(os.path.dirname(self._hier_cache_path()), exist_ok=True)
+            with open(self._hier_cache_path(), 'w', encoding='utf-8') as f:
+                json.dump(self._hier_disk, f)
+        except OSError:
+            pass                                    # only a cache
+
+    def may_have_children(self, du: DesignUnit) -> bool:
+        """Whether a hierarchy row gets an expand mark, without reading a block diagram not read yet."""
+        g = du.graphic_view()
+        if g is not None and g.kind == 'bd':
+            key = (g.path, g.mtime)
+            if key in self.view_cache:
+                return bool(self.view_cache[key])
+            saved = self._hier_disk.get(g.path)
+            return bool(saved[1]) if saved and saved[0] == g.mtime else True
+        return bool(self.children_of(du))
+
     def children_of(self, du: DesignUnit) -> list[tuple[str, str, str, list[str]]]:
         """(instance, unit, library or '', generate path) below a design unit."""
         g = du.graphic_view()
         if g is not None and g.kind == 'bd':
             key = (g.path, g.mtime)
             if key not in self.view_cache:
+                saved = self._hier_disk.get(g.path)
+                if saved and saved[0] == g.mtime:       # read in an earlier session, file unchanged
+                    self.view_cache[key] = [tuple(c) for c in saved[1]]
+                    return self.view_cache[key]
                 try:
                     bd = load_view(du.library, du, g)
                     # generate frames around an instance give its place in the hierarchy (FOR : name)
                     self.view_cache[key] = [(i.name, i.unit, i.library,
                                              [f.label for f in bd.frame_path(i.x + i.w / 2, i.y + i.h / 2)])
-                                            for i in bd.instances]
+                                            for i in bd.instances if i.library != 'moduleware']   # gates, not units
+                    self._hier_disk[g.path] = [g.mtime, self.view_cache[key]]
+                    self._save_hier_cache()
                 except Exception as e:
                     self.view_cache[key] = []
                     self.log(f'{du.name}: cannot read {os.path.basename(g.path)}: {e}', 'error')
@@ -1551,6 +1603,7 @@ class DesignManager(QMainWindow):
         w = FsmEditorWindow(recovered or model, ctx) if view.kind == 'fsm' else BdEditorWindow(recovered or model, ctx)
         if recovered is not None:
             w.dirty = True
+            w.undo_stack.clean = None           # recovered changes are not on disk: no state is "saved"
             w.update_title()
             self.log(f'Recovered unsaved changes of {du.library.name}/{du.name}/{view.name}')
         if view.legacy:
@@ -1873,12 +1926,27 @@ class DesignManager(QMainWindow):
         ports = dlg.parsed_ports()
         if kind == 'fsm':
             view = dlg.view.text().strip() or 'fsm'
-            model = new_fsm(lib.name, unit, view, ports, self.prefs.default_language,
+            model = new_fsm(lib.name, unit, view, ports, dlg.language.currentData(),
                             self.prefs.default_state_decl, self.prefs.default_encoding)
+            model.pre_module_directives = self._pre_module(model.language)
+            model.post_module_directives, model.end_module_directives = self.prefs.post_module, self.prefs.end_module
             path = native_path(lib, unit, view, 'fsm')
             os.makedirs(os.path.dirname(path), exist_ok=True)
             model.save(path)
             self.log(f'Created state machine {lib.name}/{unit}/{view}')
+        elif kind == 'bd':
+            # an empty block diagram (as HDS creates one); its ports come from the nets and
+            # PortIOs drawn on it, so the Ports list of the dialog is not used
+            from ..bd_model import BlockDiagram
+            view = dlg.view.text().strip() or 'struct'
+            model = BlockDiagram(library=lib.name, unit=unit, view=view, language=dlg.language.currentData())
+            model.pre_module_directives = self._pre_module(model.language)
+            model.post_module_directives, model.end_module_directives = self.prefs.post_module, self.prefs.end_module
+            path = native_path(lib, unit, view, 'bd')
+            os.makedirs(os.path.dirname(path), exist_ok=True)
+            with open(path, 'w', encoding='utf-8') as f:
+                f.write(model.to_json())
+            self.log(f'Created block diagram {lib.name}/{unit}/{view}')
         else:
             language = 'systemverilog' if kind == 'sv' else 'verilog'
             pr = self.prefs                         # Options > Verilog > File: source file naming rule
@@ -1889,7 +1957,8 @@ class DesignManager(QMainWindow):
             header = expand_header(self.prefs.header_template, lib.name, unit, unit, self.project.name)
             os.makedirs(lib.main_hdl_dir, exist_ok=True)
             with open(path, 'w', encoding='utf-8', newline='\n') as f:
-                f.write(new_module(unit, ports, language, header))
+                f.write(new_module(unit, ports, language, header, self._pre_module(language),
+                                            pr.post_module, pr.end_module))
             self.log(f'Created {path}', path=path)
         self.explore(lib)
         self.explorers[lib.name].refresh()
@@ -1897,9 +1966,16 @@ class DesignManager(QMainWindow):
         if du:
             self.open_unit(du)
 
+    def _pre_module(self, language: str) -> str:
+        """Verilog Options > Default Directives (pre-module), then the Default Packages for SystemVerilog."""
+        parts = [self.prefs.pre_module.strip('\n')]
+        if language == 'systemverilog':
+            parts.append(self.prefs.package_refs.strip('\n'))
+        return '\n'.join(t for t in parts if t)
+
     def verilog_options(self):
         from .dm_options import VerilogOptionsDialog
-        dlg = VerilogOptionsDialog(self.prefs, self)
+        dlg = VerilogOptionsDialog(self.prefs, self, self.project)
         dlg.exec()
         if dlg.applied:
             self._apply_verilog_options()
@@ -1907,8 +1983,10 @@ class DesignManager(QMainWindow):
 
     def _apply_verilog_options(self):
         from ..project import generate, project
+        from . import text_editor
         project.set_allowed_extensions(self.prefs.verilog_extensions)
         generate.GENERATED_EXT.update(verilog=self.prefs.generated_ext or 'v', systemverilog=self.prefs.sv_ext or 'sv')
+        text_editor.TAB_WIDTH = int(self.prefs.verilog_style.get('tab_width', 2))
 
     def preferences(self):
         dlg = PreferencesDialog(self.prefs, self)

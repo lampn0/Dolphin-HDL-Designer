@@ -9,6 +9,7 @@ from PySide6.QtWidgets import QMessageBox
 from ..prefs import expand_header
 from ..project import lock
 from ..bd_model import BlockDiagram
+from ..model import FsmView
 from ..project.generate import generate_unit, load_view, native_path, target_path
 from ..project.project import DesignUnit, Library, Project, View
 
@@ -46,6 +47,11 @@ class EditorContext:
             if info is None or lock.is_mine(info):
                 continue
             stale = lock.is_stale(info)
+            if stale and info.user == lock.me().user:
+                # Left by this user on this host by a run that no longer exists (a crash, a
+                # killed tool): nobody holds it, take it over without asking.
+                self.manager.log(f'{os.path.basename(t)}: stale lock of {info.describe()} taken over')
+                continue
             box = QMessageBox(parent)
             box.setIcon(QMessageBox.Warning)
             box.setWindowTitle('View is locked')
@@ -73,10 +79,15 @@ class EditorContext:
         self.manager.editor_closed(self)
 
     # -- saving / generating --------------------------------------------------------
-    def save(self, model, parent) -> bool:
+    def save(self, model, parent, geometry=None) -> bool:
+        """Save the view. A state diagram read from an HDS .sm is written back to that .sm
+        (so HDS and this tool keep editing the same file); `geometry` gives the lines as
+        drawn (FsmScene.hds_geometry). Other views are saved as this tool's .json."""
         if self.readonly:
             QMessageBox.information(parent, 'Read-only', f'Cannot save: {self.readonly_reason}.')
             return False
+        if self.view.legacy and self.view.kind == 'fsm' and self.view.path.endswith('.sm'):
+            return self._save_sm(model, parent, geometry)
         path = native_path(self.lib, self.unit.name, self.view.name, self.view.kind)
         os.makedirs(os.path.dirname(path), exist_ok=True)
         if self.manager.prefs.create_backup and os.path.exists(path):
@@ -87,6 +98,23 @@ class EditorContext:
             lock.acquire(path, force=True)
             self.locked.append(path)
         self.manager.log(f'Saved {path}')
+        self.manager.view_saved(self)
+        return True
+
+    def _save_sm(self, model, parent, geometry) -> bool:
+        from ..hds.export_sm import export_sm
+        path = self.view.path
+        if self.manager.prefs.create_backup and os.path.exists(path):
+            import shutil
+            shutil.copy2(path, path + '.bak')       # Main Settings > Save > Create backup file
+        warn = export_sm(model, path, path, geometry)
+        self.manager.log(f'Saved {path}')
+        for w in warn:
+            self.manager.log(f'  not saved: {w}')
+        if warn:
+            QMessageBox.warning(parent, 'Saved with omissions',
+                                'Saved to the HDS file, but these changes could not be written yet:\n\n'
+                                + '\n'.join(warn[:15]) + ('\n...' if len(warn) > 15 else ''))
         self.manager.view_saved(self)
         return True
 
@@ -143,20 +171,41 @@ class EditorContext:
     def open_generated(self, model) -> None:
         prefs = self.manager.prefs
         path = target_path(self.lib, self.unit.name, model.language, prefs.generated_name_rule,
-                           prefs.generated_lowercase)
+                           prefs.generated_lowercase, getattr(model, 'view', ''))
         self.manager.open_text_file(path)
 
     def header_for(self, model) -> str:
-        return expand_header(self.manager.prefs.header_template, self.lib.name, self.unit.name,
-                             getattr(model, 'view', self.view.name), self.project.name)
+        return generation_header(self.manager.prefs, self.lib.name, self.unit.name,
+                                 getattr(model, 'view', self.view.name), self.project.name, model)
+
+
+def generation_header(prefs, library: str, unit: str, view: str, project_name: str, model) -> str:
+    """Header of the view type (Verilog Options > Headers), then the generation properties if asked."""
+    view_type = ('Block Diagram' if isinstance(model, BlockDiagram) else
+                 'State Diagram' if isinstance(model, FsmView) else '')
+    header = expand_header(prefs.header_for(view_type), library, unit, view, project_name)
+    if not prefs.gen_properties or model is None:
+        return header
+    lang = 'SystemVerilog' if model.language == 'systemverilog' else 'Verilog'
+    lines = ['// Generation properties:', f'//   Language : {lang}', f'//   View     : {library}.{unit}.{view}']
+    if prefs.gen_signal_status and isinstance(model, FsmView):
+        lines.append('//   Signal status:')
+        lines += [f'//     {s.name:<20} {s.mode:<7} {s.scheme}' for s in model.signals]
+    return header.rstrip('\n') + '\n' + '\n'.join(lines)
 
 
 def generate_with_prompt(manager, lib: Library, unit: DesignUnit, model, parent, view: View | None = None) -> None:
     """Generate one unit; ask before overwriting a file changed outside the tool."""
     prefs = manager.prefs
-    header = expand_header(prefs.header_template, lib.name, unit.name,
-                           getattr(model, 'view', '') if model is not None else (view.name if view else ''),
-                           manager.project.name if manager.project else '')
+    if model is None:
+        v = view or unit.graphic_view()
+        try:
+            model = load_view(lib, unit, v) if v is not None else None
+        except Exception:
+            model = None                            # generate_unit reports the error
+    header = generation_header(prefs, lib.name, unit.name,
+                               getattr(model, 'view', '') if model is not None else (view.name if view else ''),
+                               manager.project.name if manager.project else '', model)
     kw = dict(rule=prefs.generated_name_rule, lower=prefs.generated_lowercase, header=header)
     res = generate_unit(lib, unit, view=view, model=model, **kw)
     if res.status == 'conflict':

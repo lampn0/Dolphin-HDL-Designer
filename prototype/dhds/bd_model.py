@@ -8,6 +8,9 @@ from typing import Any
 from .model import Parameter, Signal
 
 
+NAME_LINE_H = 12.0      # spacing of the library / component / instance name lines of an instance
+
+
 @dataclass
 class BdPin:
     """A port on a component instance and the net connected to it."""
@@ -19,6 +22,9 @@ class BdPin:
     y: float = 0.0
     side: str = 'left'         # left | right | top | bottom
     bounds: str = ''           # e.g. [7:0], used when a new net is created from this pin
+    clock: bool = False        # clock input: drawn with an edge triangle inside the body
+    arrow: str = ''            # where the port triangle points (right/left/up/down); '' = by mode and side
+    slice: str = ''            # part of the net connected, e.g. "[3:0]" (a sliced wire); '' = whole net
 
 
 @dataclass
@@ -37,6 +43,9 @@ class BdInstance:
     w: float = 120.0
     h: float = 80.0
     show_instance: bool = True  # instance name visible
+    # top-left of the name text (library, component, instance lines) relative to the body;
+    # None: centred at the top of the body
+    text_pos: list[float] | None = None
     # text visibility of the pins (Text Visibility page)
     text_name: bool = True
     text_type: bool = False
@@ -68,6 +77,34 @@ class BdEmbedded:
     y: float = 0.0
     w: float = 200.0
     h: float = 120.0
+    # The block's Text view: a white box [x, y, w, h] relative to the block's top-left. A
+    # legacy block has it inside the yellow frame; a new block gets it when the user picks
+    # "Text" in Create Embedded View, at the block's bottom-right corner as in HDS. None: no
+    # view yet (an empty yellow block, generating nothing).
+    text_box: list[float] | None = None
+    show_name: bool = True      # "eb1" label above the block
+
+
+@dataclass
+class BdComment:
+    """Free comment text; the boxes of the title block share a group and move together."""
+    id: str
+    text: str = ''
+    x: float = 0.0
+    y: float = 0.0
+    w: float = 160.0
+    h: float = 14.0
+    fill: str = ''              # box colour, '' for none
+    color: str = '#000080'      # text colour
+    group: str = ''
+
+
+@dataclass
+class BdJunction:
+    """Dot where nets of the same name meet."""
+    id: str
+    x: float = 0.0
+    y: float = 0.0
 
 
 @dataclass
@@ -99,6 +136,13 @@ class BdWire:
     end: str = ''
     show_text: bool = True     # net name shown on the diagram
     label: list[float] | None = None   # name text position, relative to the first point
+    label_vertical: bool = False       # name runs upward along a vertical segment (legacy "ro 270")
+    slice: str = ''            # the part of the net it carries, e.g. "[15]" (ripped from a bus); '' = all
+
+    @property
+    def text(self) -> str:
+        """The name shown on the diagram: the net and the slice it carries."""
+        return self.net + self.slice
 
 
 @dataclass
@@ -158,9 +202,19 @@ class BlockDiagram:
     port_ios: list[BdPortIo] = field(default_factory=list)
     wires: list[BdWire] = field(default_factory=list)
     frames: list[BdFrame] = field(default_factory=list)
+    comments: list[BdComment] = field(default_factory=list)
+    junctions: list[BdJunction] = field(default_factory=list)
+    # Change Style: net name -> 'bus' | 'signal' when drawn other than its bounds suggest
+    net_styles: dict[str, str] = field(default_factory=dict)
     pre_module_directives: str = ''
     post_module_directives: str = ''
     end_module_directives: str = ''
+    # user text of the diagram's Declarations block ("Pre User:" / "Post User:")
+    pre_user_declarations: str = ''
+    post_user_declarations: str = ''
+    # visible area when the diagram was last saved by HDS (scene units: x0, y0, x1, y1); the
+    # editor opens there, as HDS does, when it has no view of its own for the diagram
+    view_area: list[float] | None = None
     header: str = ''
 
     def frame_path(self, x: float, y: float) -> list[BdFrame]:
@@ -191,7 +245,8 @@ class BlockDiagram:
 
 
 _LISTS = {'signals': Signal, 'parameters': Parameter, 'instances': BdInstance, 'embedded': BdEmbedded,
-          'port_ios': BdPortIo, 'wires': BdWire, 'params': Parameter, 'pins': BdPin, 'frames': BdFrame}
+          'port_ios': BdPortIo, 'wires': BdWire, 'params': Parameter, 'pins': BdPin, 'frames': BdFrame,
+          'comments': BdComment, 'junctions': BdJunction}
 
 
 def _build(cls, data: dict) -> Any:

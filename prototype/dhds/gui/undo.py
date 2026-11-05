@@ -4,7 +4,8 @@ from __future__ import annotations
 
 import json
 
-from PySide6.QtCore import QObject, QSettings, QTimer, Signal
+from PySide6.QtCore import QObject, QSettings, Qt, QTimer, Signal
+from PySide6.QtGui import QGuiApplication
 
 
 class SnapshotUndo(QObject):
@@ -17,20 +18,43 @@ class SnapshotUndo(QObject):
         self._redo: list[str] = []
         self._limit = limit
         self._restoring = False
+        # The snapshot that matches the file on disk (taken when the view is opened and after
+        # each save). Undo / redo landing on it means "no unsaved changes", so the editor can
+        # drop its '*'. None: no snapshot matches the disk (e.g. recovered unsaved changes).
+        self.clean: str | None = None
         self._timer = QTimer(self)
         self._timer.setSingleShot(True)
         self._timer.setInterval(delay_ms)
-        self._timer.timeout.connect(self._take)
+        self._timer.timeout.connect(self._on_timer)
 
     def reset(self):
+        """Start a fresh history from the model as it is now, which is taken as saved."""
         self._timer.stop()
         self._undo, self._redo = [self._snapshot()], []
+        self.clean = self._undo[0]
         self.changed.emit()
+
+    def mark_clean(self):
+        """The model was just saved: its current state is the one on disk."""
+        self.flush()
+        self.clean = self._undo[-1] if self._undo else self._snapshot()
+
+    def is_clean(self, snap: str) -> bool:
+        """Whether a snapshot (e.g. the one undo just restored) equals the saved state."""
+        return self.clean is not None and snap == self.clean
 
     def note_change(self):
         """Call after every model edit; consecutive edits are merged into one step."""
         if not self._restoring:
             self._timer.start()
+
+    def _on_timer(self):
+        # never record the model in the middle of a mouse drag: wait for the release, so one
+        # drag is always one undo step even when the machine is slow
+        if QGuiApplication.mouseButtons() != Qt.NoButton:
+            self._timer.start()
+            return
+        self._take()
 
     def _take(self):
         snap = self._snapshot()

@@ -57,6 +57,14 @@ def _top_left(node: Node) -> tuple[float, float] | None:
     return None
 
 
+def _geo_sig(t: Transition, m: Machine) -> list:
+    """What the line of a transition depends on: its route points, end angles and the places
+    of its two nodes. The geometry read from the file is used while this stays the same."""
+    a, b = m.node(t.src), m.node(t.dst)
+    return [[list(p) for p in t.points], t.start_angle, t.end_angle,
+            [a.x, a.y] if a is not None else None, [b.x, b.y] if b is not None else None]
+
+
 def _transition_geometry(t: Transition, n: Node, m: Machine) -> None:
     """Bend points, attach angles and label position as drawn in the legacy tool."""
     shape = n.get('shape')
@@ -74,6 +82,105 @@ def _transition_geometry(t: Transition, n: Node, m: Machine) -> None:
         corner = _top_left(tb)
         if corner:
             t.label_x, t.label_y = corner
+            box = _rect(tb.get('shape'))
+            if box:
+                t.hds['sig'] = [t.cond, t.actions]
+                t.hds['box_size'] = [box[2] - box[0], box[3] - box[1]]
+                cond, acts = _rect(tb.get('condition')), _rect(tb.get('actions'))
+                if cond:
+                    t.hds['cond'] = [cond[0] - box[0], cond[1] - box[1]]
+                if acts:
+                    t.hds['acts'] = [acts[0] - box[0], acts[1] - box[1]]
+                ls = tb.get('lineShape')
+                line = _rect(ls) if isinstance(ls, Node) and not _hidden(ls) else None
+                t.hds['line'] = line[1] - box[1] if line else None
+    t.hds['geo_sig'] = _geo_sig(t, m)
+    tp = n.get('tp')
+    if isinstance(tp, Node):
+        circle = _rect(tp.get('shape'))
+        t.hds['prio_shown'] = not _hidden(tp.get('shape'))
+        if circle:
+            t.hds['prio_center'] = [(circle[0] + circle[2]) / 2, (circle[1] + circle[3]) / 2]
+            t.hds['prio_r'] = (circle[2] - circle[0]) / 2
+
+
+def _rect(node: Any) -> tuple[float, float, float, float] | None:
+    """(x0, y0, x1, y1) in scene units of an object's extent ("xt"), or of its shape's."""
+    if not isinstance(node, Node):
+        return None
+    xt = node.get('xt')
+    if not isinstance(xt, str):
+        sh = node.get('shape')
+        xt = sh.get('xt') if isinstance(sh, Node) else None
+    if isinstance(xt, str) and xt.count(',') == 3:
+        x0, y0, x1, y1 = (float(v) * SCALE for v in xt.split(','))
+        return x0, y0, x1, y1
+    return None
+
+
+def _font_size(node: Any) -> int | None:
+    """Point size of a text object (va font "name,size,bold")."""
+    va = node.get('va') if isinstance(node, Node) else None
+    font = va.get('font') if isinstance(va, Node) else None
+    parts = font.split(',') if isinstance(font, str) else []
+    return int(parts[1]) if len(parts) > 1 and parts[1].isdigit() else None
+
+
+def _text_geo(node: Any, cx: float, cy: float) -> list | None:
+    """Where HDS drew a text object (Text / MLText, or the text of a TextAssociate), relative
+    to its node's centre (cx, cy): [x0, y0, x1, y1, justify, baseline]. justify is HDS's "ju"
+    (0 centred, 2 right, None left); baseline the y of the first line's baseline ("blo"), or
+    None. None when the text is not there or hidden."""
+    if isinstance(node, Node) and node.type == 'TextAssociate':
+        node = node.get('text')
+    r = _rect(node)
+    if r is None or _hidden(node):
+        return None
+    blo = node.get('blo')
+    base = float(blo.split(',')[1]) * SCALE - cy if isinstance(blo, str) and ',' in blo else None
+    return [r[0] - cx, r[1] - cy, r[2] - cx, r[3] - cy, node.get('ju'), base]
+
+
+def _shape_geo(n: Node, cx: float, cy: float, kinds: tuple[str, ...]) -> list | None:
+    """The first shape of one of the given kinds in a node's shape, relative to (cx, cy)."""
+    for s in _walk(n.get('shape')):
+        if s.type in kinds:
+            r = _rect(s)
+            if r:
+                return [r[0] - cx, r[1] - cy, r[2] - cx, r[3] - cy]
+    return None
+
+
+def _node_geo(n: Node, cx: float, cy: float) -> dict:
+    """The geometry of a junction, link or state point as HDS saved it (see model: hds)."""
+    g = {}
+    shape = _shape_geo(n, cx, cy, ('Diamond', 'Pentagon', 'Circle'))
+    if shape:
+        g['shape'] = shape
+    # the arrow's direction: HDS "ro" 270 = pointing right (the usual), 180 up, 90 left, 0 down
+    pent = next((s for s in _walk(n.get('shape')) if s.type == 'Pentagon'), None)
+    if pent is not None and isinstance(pent.get('ro'), int) and pent.get('ro') != 270:
+        g['ro'] = pent.get('ro')
+    for key, node in (('symbol', n.get('symbol')), ('name', n.get('name')), ('expr', n.get('caseExpr'))):
+        t = _text_geo(node, cx, cy)
+        if t:
+            g[key] = t
+    cond = n.get('cond')
+    if isinstance(cond, Node):
+        box = cond.get('shape')
+        if isinstance(box, Node) and not _hidden(box) and _rect(box):
+            r = _rect(box)
+            g['cond_box'] = [r[0] - cx, r[1] - cy, r[2] - cx, r[3] - cy]
+        t = _text_geo(cond.get('cond'), cx, cy)
+        if t:
+            g['cond'] = t
+    return g
+
+
+def _hidden(node: Any) -> bool:
+    """Whether an object is drawn hidden (va isHidden 1)."""
+    va = node.get('va') if isinstance(node, Node) else None
+    return isinstance(va, Node) and va.get('isHidden') == 1
 
 
 def _labelled_texts(doc: Document) -> dict[str, str]:
@@ -105,9 +212,10 @@ def _signals(doc: Document) -> list[Signal]:
         decl = port.get('decl')
         mode = _MODE.get(port.get('m'), 'input')
         expr = n.get('expr') or ''
-        category = 'data'
-        if n.get('cat') is not None:
-            category = 'clock' if 'edge' in expr else 'reset'
+        # signal category in the legacy file: cat 1 = clock, 8 = reset, 12 / 15 = enable
+        category = {None: 'data', 1: 'clock', 8: 'reset'}.get(n.get('cat'), 'enable')
+        if category == 'reset' and 'edge' in expr:
+            category = 'clock'
         if mode in ('output', 'local'):
             scheme = 'none' if n.get('ass') == '<none>' else _SCHEME.get(n.get('scheme'), 'comb')
         else:
@@ -146,8 +254,87 @@ def symbol_parameters(path: str) -> list[tuple[str, str]]:
     return [(p.name, p.value) for p in _parameters(parse_file(path))]
 
 
+def _transition_actions(n: Node) -> str:
+    tb = n.get('tb')
+    actions = _text(tb.get('actions')) if isinstance(tb, Node) else ''
+    return '' if actions.strip() == '< Automatic >' else actions
+
+
+def _join(a: str, b: str, sep: str) -> str:
+    return sep.join(x for x in (a, b) if x.strip())
+
+
+def _flat_transitions(diagram: Node, flatten: bool = True) -> list[tuple[Node, int, int, str, str]]:
+    """All transitions of a diagram as (node, src label, dst label, condition, actions), with the
+    hierarchical states resolved the way HDS generates them.
+
+    A CompositeState (hierarchical state) only groups states: it never becomes a state of the
+    machine. HDS follows the paths through it:
+      - a transition into the composite state continues from the entry point of its child
+        diagram, so  X --c/a--> COMPOSITE  +  ENTRY --e/b--> Y  becomes  X --c&e / a b--> Y;
+      - a transition into an exit point of the child diagram continues along the transitions
+        leaving the composite state:  Z --z/a--> EXIT  +  COMPOSITE --w/b--> W  becomes
+        Z --z&w / a b--> W.
+    The node (geometry, priority, id) of the first transition of each path is kept.
+    """
+    entries: dict[int, list[int]] = {}       # composite label -> entry point labels inside it
+    exit_owner: dict[int, int] = {}          # exit point label -> composite label owning it
+    for n in _walk(diagram):
+        if n.type == 'CompositeState' and n.label is not None:
+            child = n.get('childDiagram')
+            for c in _walk(child):
+                if c.label is None:
+                    continue
+                if c.type == 'EntryPoint':
+                    entries.setdefault(n.label, []).append(c.label)
+                elif c.type == 'ExitPoint':
+                    exit_owner[c.label] = n.label
+    raw = []
+    for n in _walk(diagram):
+        if n.type != 'Transition':
+            continue
+        src, dst = n.get('start'), n.get('end')
+        if isinstance(src, Ref) and isinstance(dst, Ref):
+            raw.append((n, src.label, dst.label, n.get('cond') or '', _transition_actions(n)))
+    if not flatten or (not entries and not exit_owner):
+        return raw
+    out_of: dict[int, list[tuple]] = {}      # label -> transitions starting there
+    for r in raw:
+        out_of.setdefault(r[1], []).append(r)
+
+    def follow(path: tuple, depth: int = 0) -> list[tuple]:
+        n, src, dst, cond, actions = path
+        if depth > 16:                       # a malformed cycle of composites: give up on it
+            return []
+        if dst in entries:
+            nxt = [r for e in entries[dst] for r in out_of.get(e, [])]
+        elif dst in exit_owner:
+            nxt = out_of.get(exit_owner[dst], [])
+        else:
+            return [path]
+        res = []
+        for r in nxt:
+            cond2 = _join(f'({cond})' if cond and r[3] else cond, f'({r[3]})' if cond and r[3] else r[3], ' & ')
+            res += follow((n, src, r[2], cond2, _join(actions, r[4], '\n')), depth + 1)
+        return res
+
+    flat = []
+    for r in raw:
+        # paths starting inside the hierarchy plumbing are reached through the paths above
+        if r[1] in entries or r[1] in exit_owner.values() or any(r[1] in v for v in entries.values()):
+            continue
+        flat += follow(r)
+    return flat
+
+
 def _machine(doc: Document, csm: Node, header_machine: Node | None) -> Machine:
     m = Machine(name=csm.get('name') or 'fsm')
+    gen = csm.get('genChar')
+    m.next_state_clocking = isinstance(gen, Node) and gen.get('nextStateClocking') == 1
+    top = csm.get('topDiagram')
+    va = top.get('viewArea') if isinstance(top, Node) else None
+    if isinstance(va, str) and va.count(',') == 3:
+        m.view_area = [float(v) * SCALE for v in va.split(',')]
     if header_machine is not None and header_machine.get('stateSignalName'):
         m.current_state_name = header_machine.get('stateSignalName')
     ids: dict[int, str] = {}
@@ -156,13 +343,39 @@ def _machine(doc: Document, csm: Node, header_machine: Node | None) -> Machine:
     for i, ref in enumerate(csm.get('stateOrder') or []):
         if isinstance(ref, Ref):
             order[ref.label] = i
+    # the hierarchical state each node is inside (deepest one: an inner composite's walk
+    # comes after its parent's)
+    parent_of: dict[int, int] = {}
+    for n in _walk(diagram):
+        if n.type == 'CompositeState' and n.label is not None:
+            for c in _walk(n.get('childDiagram')):
+                if c.label is not None and c is not n:
+                    parent_of[c.label] = n.label
     for n in _walk(diagram):
         if n.label is None:
             continue
         x, y = _center(n)
         nid = f'n{n.label}'
-        if n.type == 'State':
+        parent = f'n{parent_of[n.label]}' if n.label in parent_of else ''
+        if n.type == 'CompositeState':
+            st = State(id=nid, name=_text(n.get('name')), x=x, y=y, hier=True, parent=parent)
+            shape = n.get('shape')
+            if isinstance(shape, Node) and isinstance(shape.get('radius'), int):
+                st.radius = shape.get('radius') * SCALE
+            m.states.append(st)
+        elif n.type in ('EntryPoint', 'ExitPoint'):
+            m.points.append(Point(id=nid, kind='entry' if n.type == 'EntryPoint' else 'exit', x=x, y=y,
+                                  parent=f'n{parent_of[n.label]}' if n.label in parent_of else ''))
+        elif n.type == 'State':
             st = State(id=nid, name=_text(n.get('name')), x=x, y=y, encoding=_text(n.get('encoding')))
+            shape = n.get('shape')
+            if isinstance(shape, Node) and isinstance(shape.get('radius'), int):
+                st.radius = shape.get('radius') * SCALE
+            font = _font_size(n.get('name'))
+            if font:
+                st.hds['font'] = font
+            st.is_wait = n.get('isWait') == 1 or (isinstance(shape, Node) and shape.type == 'CircleInOctagon')
+            st.wait = _text(n.get('wait')) if st.is_wait else ''
             blk = n.get('actionBlk')
             if isinstance(blk, Node):
                 st.entry_actions = _text(blk.get('entryActions'))
@@ -171,34 +384,48 @@ def _machine(doc: Document, csm: Node, header_machine: Node | None) -> Machine:
                 corner = _top_left(blk)
                 if corner:
                     st.actions_x, st.actions_y = corner
+                    box = _rect(blk.get('shape'))
+                    if box:
+                        st.hds['sig'] = [st.entry_actions, st.in_actions, st.exit_actions]
+                        st.hds['act_size'] = [box[2] - box[0], box[3] - box[1]]
+                        for key in ('tline', 'bline'):
+                            ln = blk.get(key)
+                            r = _rect(ln) if isinstance(ln, Node) and not _hidden(ln) else None
+                            st.hds[key] = r[1] - box[1] if r else None
+                        for key, field_ in (('entry', 'entryActions'), ('in', 'inActions'),
+                                            ('exit', 'exitActions')):
+                            r = _rect(blk.get(field_))
+                            if r:
+                                st.hds[key] = [r[0] - box[0], r[1] - box[1]]
+            st.parent = parent
             m.states.append(st)
         elif n.type == 'Junction':
             expr = _text(n.get('caseExpr'))
             if expr.startswith('CASE:'):
                 expr = expr[5:].strip()
-            m.junctions.append(Junction(id=nid, kind='case' if n.get('jType') == 1 else 'if', expr=expr, x=x, y=y))
+            sym = n.get('symbol')
+            m.junctions.append(Junction(id=nid, kind='case' if n.get('jType') == 1 else 'if', expr=expr, x=x, y=y,
+                                        symbol=_text(sym) if isinstance(sym, Node) else '', parent=parent,
+                                        hds=_node_geo(n, x, y)))
         elif n.type == 'Link':
-            m.links.append(Link(id=nid, target=_text(n.get('name')), x=x, y=y))
+            m.links.append(Link(id=nid, target=_text(n.get('name')), x=x, y=y, parent=parent,
+                                hds=_node_geo(n, x, y)))
         elif n.type in _POINT:
-            m.points.append(Point(id=nid, kind=_POINT[n.type], x=x, y=y))
+            m.points.append(Point(id=nid, kind=_POINT[n.type], x=x, y=y, hds=_node_geo(n, x, y)))
         else:
             continue
         ids[n.label] = nid
     m.states.sort(key=lambda s: order.get(int(s.id[1:]), 1 << 30))
-    for n in _walk(diagram):
-        if n.type != 'Transition':
+    # the transitions as drawn (to / from hierarchical states and their entry / exit points);
+    # code generation follows the paths through them (codegen.hierarchy)
+    for n, src, dst, cond, actions in _flat_transitions(diagram, flatten=False):
+        if src not in ids or dst not in ids:
             continue
-        src, dst = n.get('start'), n.get('end')
-        if not (isinstance(src, Ref) and isinstance(dst, Ref)) or src.label not in ids or dst.label not in ids:
-            continue
-        tb, tp = n.get('tb'), n.get('tp')
-        actions = _text(tb.get('actions')) if isinstance(tb, Node) else ''
-        if actions.strip() == '< Automatic >':
-            actions = ''
+        tp = n.get('tp')
         prio = _text(tp.get('pr')) if isinstance(tp, Node) else ''
         t = Transition(
-            id=f'n{n.label}' if n.label is not None else m.new_id('t'), src=ids[src.label], dst=ids[dst.label],
-            cond=n.get('cond') or '', actions=actions, priority=int(prio) if prio.isdigit() else 1)
+            id=f'n{n.label}' if n.label is not None else m.new_id('t'), src=ids[src], dst=ids[dst],
+            cond=cond, actions=actions, priority=int(prio) if prio.isdigit() else 1)
         _transition_geometry(t, n, m)
         m.transitions.append(t)
     for i, t in enumerate(m.transitions):
@@ -231,6 +458,24 @@ def import_sm(path: str, library: str | None = None, unit: str | None = None) ->
         registered_affix=model.get('signalSuffix') or '_r',
         clocked_affix=model.get('clockSuffix') or '_cld',
     )
+    tmpl = model.get('defaultState')
+    if isinstance(tmpl, Node):
+        view.default_state_name = _text(tmpl.get('name'))
+    # positions of the declaration blocks drawn at the top of the diagram (their title texts)
+    titles = {'Global Actions': 'global', 'Concurrent Statements': 'concurrent',
+              'Module Declarations': 'module', 'Signal Status': 'status',
+              'State Register Statements': 'statereg', 'Compiler Directives': 'compdir'}
+    for n in doc.walk():
+        key = titles.get(n.get('st')) if n.type == 'Text' else None
+        xt = n.get('xt') if key else None
+        if key and key not in view.decl_pos and isinstance(xt, str) and xt.count(',') == 3:
+            x0, y0 = (float(v) * SCALE for v in xt.split(',')[:2])
+            view.decl_pos[key] = [x0, y0]
+            if _hidden(n):
+                view.decl_hidden.append(key)
+    tmpl = model.get('defaultJunction')
+    if isinstance(tmpl, Node) and isinstance(tmpl.get('symbol'), Node):
+        view.default_junction_symbol = _text(tmpl.get('symbol'))
     header = doc.get('Header')
     header_machines = []
     if isinstance(header, Node) and isinstance(header.get('machine'), Node):

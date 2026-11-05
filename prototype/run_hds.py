@@ -9,6 +9,7 @@ import sys
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
+from PySide6.QtCore import QTimer  # noqa: E402
 from PySide6.QtWidgets import QApplication  # noqa: E402
 
 from dhds.gui.design_manager import DesignManager  # noqa: E402
@@ -20,11 +21,14 @@ def main() -> int:
     dm = DesignManager()
     dm.show()
     args = [a for a in sys.argv[1:] if not a.startswith('--')]
-    if '--new' in sys.argv or not dm.prefs.restore_session:
-        if args:
-            dm.load_project(args[0])
-    else:
-        dm.restore_session(args[0] if args else '')
+
+    def start():
+        if '--new' in sys.argv or not dm.prefs.restore_session:
+            if args:
+                dm.load_project(args[0])
+        else:
+            dm.restore_session(args[0] if args else '')
+    QTimer.singleShot(0, start)          # paint the window first, then open the project
     return app.exec()
 
 

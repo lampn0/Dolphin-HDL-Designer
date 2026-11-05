@@ -22,6 +22,12 @@ from .common import drivers, port_lines, sv_net_type, text_lines
 from .encoding import encode
 
 IND = '  '
+# An empty line between two statements of the user's action text. It goes to the block of the
+# statement after it and is written as an indentation-only line, as HDS writes it.
+BLANK = '\x00'
+# Options > Verilog > Style > "Allow implicit event expression (@*) when appropriate": off by
+# default in HDS, which then writes explicit sensitivity lists (set from the preferences)
+IMPLICIT_EVENT = False
 
 
 # --------------------------------------------------------------------------
@@ -79,17 +85,30 @@ def split_statements(text: str) -> list[str]:
             buf = []
     tail = ''.join(buf)
     if tail.strip():
-        out.append(tail)
+        if out and not _code(tail):
+            # comments after the last statement stay with that statement (and its block), as HDS
+            out[-1] += tail.rstrip()
+        else:
+            out.append(tail)
     stmts: list[str] = []
     for s in out:
+        # an empty line the user left between two statements is kept (HDS keeps it too)
+        blank_before = bool(stmts) and re.match(r'[ \t]*\n[ \t]*\n', s) is not None
         s = s.strip('\n')
         if not s.strip():
             continue
         if stmts and re.match(r'\s*else\b', s):
             stmts[-1] += '\n' + s
         else:
+            if blank_before:
+                stmts.append(BLANK)
             stmts.append(s)
-    return [_dedent(s) for s in stmts]
+    return [s if s == BLANK else _dedent(s) for s in stmts]
+
+
+def _code(s: str) -> str:
+    """The statement without its comments (empty for a comment-only statement)."""
+    return re.sub(r'//[^\n]*|/\*.*?\*/', ' ', s, flags=re.S).strip()
 
 
 def _dedent(s: str) -> str:
@@ -194,10 +213,62 @@ class FsmGenerator:
         return 'clk' if op == '<=' else 'out'
 
     def only(self, stmts: list[str], blk: str) -> list[str]:
-        return [s for s in stmts if self.block(s) == blk]
+        """The statements that go to block blk ('out' or 'clk'). A BLANK line is kept when the
+        statements on both sides of it go to that block."""
+        out = []
+        for k, s in enumerate(stmts):
+            if s == BLANK:
+                nxt = next((x for x in stmts[k + 1:] if x != BLANK), None)
+                if out and out[-1] != BLANK and nxt is not None and self.block(nxt) == blk:
+                    out.append(s)
+            elif self.block(s) == blk and _code(s):
+                # a comment-only action (no code at all) is not written, as HDS
+                out.append(s)
+        return out
 
     def kw(self, verilog: str, sv: str) -> str:
         return sv if self.sv else verilog
+
+    def _known_signals(self) -> set[str]:
+        """Every signal name a block can read: ports and locals, the clocked / registered
+        internal copies of outputs, and the state registers of every machine."""
+        v = self.v
+        names = {s.name for s in v.signals}
+        names |= {s.name + v.clocked_affix for s in self.clocked_out}
+        names |= {s.name + v.registered_affix for s in self.registered_out}
+        multi = len(v.machines) > 1
+        for m in v.machines:
+            prefix = f'{m.name}_' if multi else ''
+            names |= {prefix + m.current_state_name, prefix + m.next_state_name}
+        return names
+
+    _ASSIGNED_RE = re.compile(r'([A-Za-z_]\w*)\s*(?:\[[^\]]*\])?\s*(?<![<>!=])=(?!=)')
+    _IDENT_RE = re.compile(r"(?<![\w$'`.])[A-Za-z_]\w*")
+
+    def comb_head(self, body: list[str]) -> list[str]:
+        """The first line(s) of a combinational always block whose statements are `body`.
+
+        SystemVerilog: always_comb. Verilog: "always @ *" when Options > Verilog > Style >
+        "Allow implicit event expression (@*)" is set (IMPLICIT_EVENT); otherwise, as HDS
+        generates by default, an explicit sensitivity list: every signal the block reads (a
+        declared signal that appears in it and that the block does not assign), in alphabetical
+        order, one per line:
+            always @(
+              a,
+              b
+            )
+        """
+        if self.sv:
+            return ['always_comb']
+        if IMPLICIT_EVENT:
+            return ['always @ *']
+        code = '\n'.join(body)
+        code = re.sub(r'//[^\n]*|/\*.*?\*/|"(?:\\.|[^"\\])*"', ' ', code, flags=re.S)
+        assigned = set(self._ASSIGNED_RE.findall(code))
+        read = sorted((set(self._IDENT_RE.findall(code)) & self._known_signals()) - assigned)
+        if not read:
+            return ['always @ *']               # nothing read: no list to write
+        return ['always @('] + [f'{IND}{n}, ' for n in read[:-1]] + [f'{IND}{read[-1]}', ')']
 
     # -- tree building ----------------------------------------------------
     def _target_state(self, m: Machine, node_id: str) -> State | None:
@@ -251,7 +322,12 @@ class FsmGenerator:
         out = []
         for l in lines:
             for sub in l.split('\n'):
-                out.append(IND * level + sub if sub.strip() else '')
+                if sub == BLANK:
+                    out.append(IND * level)     # the user's empty line: indentation only
+                else:
+                    # a generated empty line stays empty; an indentation-only line (a user's
+                    # empty line indented by an inner block) gets this level too
+                    out.append(IND * level + sub if sub else '')
         return out
 
     def render_ns(self, body, ns: str, src: str) -> list[str]:
@@ -272,6 +348,10 @@ class FsmGenerator:
             head = 'if' if i == 0 else 'else if'
             head = f'{head} ({b.cond})' if b.cond is not None else 'else'
             inner = self.render_ns(b.body, ns, src)
+            if b.cond is None and i > 0 and isinstance(b.body, Chain) and inner and inner[0].startswith('if '):
+                # the else branch leads to another decision: HDS chains it as "else if (...)"
+                lines += ['else ' + inner[0]] + inner[1:]
+                continue
             wrap = isinstance(b.body, Chain) and i > 0
             if wrap:
                 lines += [head + ' begin'] + self._indent(inner, 1) + ['end']
@@ -305,8 +385,9 @@ class FsmGenerator:
         if len(rendered) == 1 and rendered[0][0].cond is None:
             return rendered[0][1]
         if (len(rendered) == 2 and rendered[0][1] is None and rendered[1][0].cond is None):
-            # "if (c) <nothing> else <acts>"  ->  "if (!(c)) <acts>"
-            return self._stmt(f'if (!({rendered[0][0].cond}))', rendered[1][1], single_ok=False)
+            # "if (c) <nothing> else <acts>"  ->  "if (!(c)) <acts>"; bare for one one-line statement
+            inner = rendered[1][1]
+            return self._stmt(f'if (!({rendered[0][0].cond}))', inner, single_ok=self._is_single_line(inner))
         lines = []
         for i, (b, inner) in enumerate(rendered):
             head = 'if' if i == 0 else 'else if'
@@ -314,12 +395,46 @@ class FsmGenerator:
             if b.cond is None and i > 0 and rendered[i - 1][0].cond is not None:
                 head = 'else'
             last = i == len(rendered) - 1
-            lines += self._stmt(head, inner, single_ok=last or not self._is_if(inner))
+            if (head == 'else' and isinstance(b.body, Chain) and not self.only(b.pre, blk)
+                    and inner and inner[0].startswith('if ')):
+                # the else branch leads to another decision: HDS chains it as "else if (...)"
+                lines += ['else ' + inner[0]] + inner[1:]
+                continue
+            if isinstance(b.body, Leaf):
+                # The branch body is the user's action text: HDS writes it bare only when it is
+                # one single-line statement; an if/case/several lines go inside begin ... end.
+                single_ok = self._is_single_line(inner or [])
+            else:
+                # The body comes from a junction (a nested decision of the diagram). Observed in
+                # HDS 2024.2 output, the inner "if" is written bare when
+                #   - it is the last branch and the inner if ends with its own else, or has only
+                #     one-line statements (no begin ... end inside);
+                #   - it is the first branch and the inner if ends with its own else;
+                # and inside begin ... end otherwise.
+                ends_else = self._ends_with_else(inner)
+                # "simple": the inner if has one-line statements only, or several branches;
+                # what gets begin ... end is a lone "if (c) begin ... end" (one branch, no else)
+                top = [l for l in '\n'.join(inner or []).split('\n') if l and not l.startswith(' ')]
+                branches = sum(1 for l in top if l.startswith(('if', 'else')))
+                simple = branches > 1 or not any(l.rstrip().endswith('begin') for l in top)
+                single_ok = (not self._is_if(inner) or (last and (ends_else or simple))
+                             or (i == 0 and ends_else))
+            lines += self._stmt(head, inner, single_ok=single_ok)
         return lines
 
     @staticmethod
     def _is_if(lines: list[str] | None) -> bool:
         return bool(lines) and lines[0].lstrip().startswith('if')
+
+    @staticmethod
+    def _ends_with_else(lines: list[str] | None) -> bool:
+        """True for an if chain whose last branch is a plain else (no else can bind to it)."""
+        if not lines or not lines[0].startswith('if'):
+            return False
+        top = [l for l in '\n'.join(lines).split('\n') if l and not l.startswith(' ')]
+        if top[0].startswith('if (!(') and not any(l.startswith('else') for l in top):
+            return True     # "if (!(c)) acts" stands for "if (c) <nothing> else acts": complete
+        return any(l.rstrip() in ('else', 'else begin') for l in top)
 
     def _stmt(self, head: str, inner: list[str] | None, single_ok: bool) -> list[str]:
         if inner and single_ok and (self._is_single_line(inner) or self._is_single_construct(inner)):
@@ -340,7 +455,9 @@ class FsmGenerator:
         if not lines[0].startswith('if'):
             return False
         top = [l for l in '\n'.join(lines).split('\n') if l and not l.startswith(' ')]
-        return all(l.startswith(('if', 'else', 'end')) for l in top) and not top[-1].startswith('endcase')
+        # a second top-level "if" (not preceded by "else") starts another statement
+        return (all(l.startswith(('if', 'else', 'end')) for l in top) and not top[-1].startswith('endcase')
+                and not any(l.startswith('if') for l in top[1:]))
 
     def _item(self, label: str, inner: list[str] | None, level: int, always_block: bool = False) -> list[str]:
         if inner and not always_block and (self._is_single_line(inner) or self._is_single_construct(inner)):
@@ -442,19 +559,21 @@ class FsmGenerator:
         for m in v.machines:
             lines += self.machine(m, prefix=f'{m.name}_' if multi else '')
         lines.append('')
-        lines.append('// Concurrent Statements')
+        if self.clocked_out or v.concurrent_statements.strip():
+            # HDS leaves this comment out when there are no concurrent statements
+            lines.append('// Concurrent Statements')
         if self.clocked_out:
             lines.append('// Clocked output assignments')
-            lines.append(self.kw('always @ *', 'always_comb'))
+            assigns = [f'{s.name} = {s.name}{v.clocked_affix};' for s in sorted(self.clocked_out, key=lambda s: s.name)]
+            lines += self.comb_head(assigns)
             lines.append('begin : clocked_output_proc')
-            for s in sorted(self.clocked_out, key=lambda s: s.name):
-                lines.append(f'{IND}{s.name} = {s.name}{v.clocked_affix};')
+            lines += [IND + a for a in assigns]
             lines.append('end')
         if v.concurrent_statements.strip():
             lines += v.concurrent_statements.rstrip('\n').split('\n')
-        if v.end_module_directives.strip():
-            lines += v.end_module_directives.rstrip('\n').split('\n')
         lines.append(f'endmodule // {v.unit}')
+        if v.end_module_directives.strip():             # after the endmodule keyword (HDS user manual)
+            lines += v.end_module_directives.rstrip('\n').split('\n')
         lines.append('')
         if self.sv:
             self.check_single_driver(v)
@@ -527,37 +646,55 @@ class FsmGenerator:
 
         # ---- next state block
         title = f'machine {m.name}'
-        lines += ['', '//' + '-' * 65, f'// Next State Block for {title}', '//' + '-' * 65,
-                  self.kw('always @ *', 'always_comb'), 'begin : ' + prefix + 'next_state_block_proc']
         body = [f'case ({cs}) ']
         for st in m.states:
             inner = self.render_ns(trees[st.name], ns, st.name)
             body += self._item(f'{IND}{st.name}:', inner, 1, always_block=True)
-        body.append(f'{IND}default: ')
-        body.append(f'{IND * 2}{ns} = {recovery[0] if recovery and recovery[0] else cs};')
+        if recovery and recovery[0]:
+            body.append(f'{IND}default: ')
+            body.append(f'{IND * 2}{ns} = {recovery[0]};')
+        else:
+            # no recovery state: HDS writes no default branch, two empty lines in its place
+            body += ['', '']
         body.append('endcase')
         body = self._wrap_interrupts(interrupts, body, lambda acts, dst: [f'{ns} = {dst};'])
+        lines += ['', '//' + '-' * 65, f'// Next State Block for {title}', '//' + '-' * 65]
+        lines += self.comb_head(body) + ['begin : ' + prefix + 'next_state_block_proc']
         lines += self._indent(body, 1)
         lines.append('end // Next State Block')
 
         # ---- output block
-        defaults = sorted((s for s in v.signals if s.mode in ('output', 'local') and s.scheme == 'comb' and s.default),
+        # default values: outputs first, then the internal (local) signals under their own
+        # comment, as HDS writes them
+        defaults = sorted((s for s in v.signals if s.mode == 'output' and s.scheme == 'comb' and s.default),
                           key=lambda s: s.name)
         defaults_r = sorted((s for s in self.registered_out if s.default), key=lambda s: s.name)
+        defaults_i = sorted((s for s in v.signals if s.mode == 'local' and s.scheme == 'comb' and s.default),
+                            key=lambda s: s.name)
         out_lines = []
         if defaults or defaults_r:
             out_lines.append('// Default Assignment')
             out_lines += [f'{s.name} = {s.default};' for s in defaults]
             out_lines += [f'{s.name}{v.registered_affix} = {s.default};' for s in defaults_r]
+        if defaults_i:
+            out_lines.append('// Default Assignment To Internals')
+            out_lines += [f'{s.name} = {s.default};' for s in defaults_i]
+        n_def = len(out_lines)                  # the default assignment lines written above
         out_lines += self.only(split_statements(v.global_pre_actions), 'out')
         case_out = self._action_case(m, cs, trees, recovery, 'out')
-        out_lines += self._wrap_interrupts(interrupts, case_out, lambda acts, dst: self.only(acts, 'out'),
-                                           action_block=True)
+        # as in the clocked block: the actions (and the interrupts around them) only when some
+        # statement goes to the output block
+        if case_out or any(self.only(acts, 'out') for _, _, acts in interrupts):
+            out_lines += self._wrap_interrupts(interrupts, case_out, lambda acts, dst: self.only(acts, 'out'),
+                                               action_block=True)
         out_lines += self.only(split_statements(v.global_post_actions), 'out')
-        lines += ['', '//' + '-' * 65, f'// Output Block for {title}', '//' + '-' * 65,
-                  self.kw('always @ *', 'always_comb'), 'begin : ' + prefix + 'output_block_proc']
-        lines += self._indent(out_lines, 1)
-        lines.append('end // Output Block')
+        if n_def and len(out_lines) > n_def and out_lines[n_def] != '':
+            out_lines.insert(n_def, '')         # HDS: an empty line after the default assignments
+        if out_lines:                           # HDS leaves out an output block with nothing in it
+            lines += ['', '//' + '-' * 65, f'// Output Block for {title}', '//' + '-' * 65]
+            lines += self.comb_head(out_lines) + ['begin : ' + prefix + 'output_block_proc']
+            lines += self._indent(out_lines, 1)
+            lines.append('end // Output Block')
 
         # ---- clocked block
         clk = next((s for s in v.signals if s.category == 'clock'), None)
@@ -588,18 +725,26 @@ class FsmGenerator:
             run.append(f'{cs} <= {ns};')
         run += [f'{s.name} <= {s.name}{v.registered_affix};' for s in sorted(self.registered_out, key=lambda s: s.name)]
         run += self.only(split_statements(v.global_pre_actions), 'clk')
-        if not interrupts:
-            run.append('')
         case_clk = self._action_case(m, cs, trees, recovery, 'clk')
-        run += self._wrap_interrupts(interrupts, case_clk, lambda acts, dst: self.only(acts, 'clk'),
-                                     action_block=True)
+        # HDS writes the clocked actions (and the interrupts around them) only when some
+        # statement goes to the clocked block
+        if case_clk or any(self.only(acts, 'clk') for _, _, acts in interrupts):
+            if not interrupts:
+                run.append('')
+            run += self._wrap_interrupts(interrupts, case_clk, lambda acts, dst: self.only(acts, 'clk'),
+                                         action_block=True)
         run += self.only(split_statements(v.global_post_actions), 'clk')
+        enable = next((s for s in v.signals if s.category == 'enable'), None)
+        if enable is not None:
+            # a machine with an enable signal only runs while it is set (as HDS writes it)
+            run = [f'if ({enable.expression or enable.name}) begin'] + self._indent(run, 1) + ['end']
         if rst_cond is not None:
-            resets = [f'{cs} <= {reset_dest or names[0]};', '// Reset Values']
-            resets += [f'{s.name}{v.clocked_affix} <= {s.reset};' for s in sorted(self.clocked_out, key=lambda s: s.name) if s.reset]
-            resets += [f'{s.name} <= {s.reset};' for s in sorted(self.registered_out, key=lambda s: s.name) if s.reset]
-            resets += [f'{s.name} <= {s.reset};' for s in sorted(v.signals, key=lambda s: s.name)
+            values = [f'{s.name}{v.clocked_affix} <= {s.reset};' for s in sorted(self.clocked_out, key=lambda s: s.name) if s.reset]
+            values += [f'{s.name} <= {s.reset};' for s in sorted(self.registered_out, key=lambda s: s.name) if s.reset]
+            values += [f'{s.name} <= {s.reset};' for s in sorted(v.signals, key=lambda s: s.name)
                        if s.mode == 'local' and s.scheme == 'clocked' and s.reset]
+            # the "// Reset Values" comment only when there are reset values (as HDS)
+            resets = [f'{cs} <= {reset_dest or names[0]};'] + (['// Reset Values'] + values if values else [])
             if reset_dest is None:
                 self.warnings.append('No reset point: reset goes to the first state')
             blk = [f'if ({rst_cond}) begin'] + self._indent(resets, 1) + ['end', 'else ', 'begin'] + \
@@ -611,7 +756,12 @@ class FsmGenerator:
         return lines
 
     def _action_case(self, m: Machine, cs: str, trees, recovery, blk: str) -> list[str]:
-        lines = ['// Combined Actions', f'case ({cs}) ']
+        # The comment above the action case. With next-state clocking HDS writes no comment in
+        # the output block (an indentation-only line) and a different one in the clocked block.
+        title = '// Combined Actions'
+        if m.next_state_clocking:
+            title = BLANK if blk == 'out' else '// Transition Actions for internal signals only'
+        lines = [title, f'case ({cs}) ']
         empty = []
         for st in m.states:
             inner = self.only(split_statements(st.in_actions), blk)
@@ -623,11 +773,14 @@ class FsmGenerator:
             else:
                 empty.append(st.name)
         rec = self.only(recovery[1], blk) if recovery else []
-        if rec and empty:
-            # list states without actions so they do not fall into the recovery branch
+        if empty and len(lines) > 2 and (rec or recovery is None):
+            # HDS lists the states without actions together, with an empty begin ... end: when
+            # the recovery branch has actions here (they must not fall into it), and when the
+            # machine has no recovery point at all (checked against HDS 2024.2 output)
             lines.append(IND + (',\n' + IND).join(empty) + ': begin')
             lines.append(IND + 'end')
-        lines += self._item(f'{IND}default:', rec, 1) if rec else []
+        # HDS always writes the default branch as begin ... end, even for one statement
+        lines += self._item(f'{IND}default:', rec, 1, always_block=True) if rec else []
         lines.append('endcase')
         if len(lines) == 3 and not rec:
             return []
@@ -649,6 +802,12 @@ class FsmGenerator:
 
 
 def generate(view: FsmView, language: str | None = None) -> tuple[str, list[str]]:
+    from .hierarchy import flatten
+    if any(s.hier for m in view.machines for s in m.states):
+        # hierarchical states: generate from the machines with their paths resolved
+        import copy
+        view = copy.copy(view)
+        view.machines = [flatten(m) for m in view.machines]
     g = FsmGenerator(view, language)
     text = g.generate()
     return text, g.warnings

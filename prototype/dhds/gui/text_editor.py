@@ -34,12 +34,16 @@ class _LineArea(QWidget):
         self.editor.paint_line_area(e)
 
 
+TAB_WIDTH = 2      # Options > Verilog > Style: Tab Width (spaces), for Verilog text views
+
+
 class CodeEditor(QPlainTextEdit):
     def __init__(self, parent=None):
         super().__init__(parent)
         self.setFont(QFont('Courier New', 10))
         self.setLineWrapMode(QPlainTextEdit.NoWrap)
-        self.setTabStopDistance(self.fontMetrics().horizontalAdvance(' ') * 2)
+        self.tab_width = TAB_WIDTH
+        self.setTabStopDistance(self.fontMetrics().horizontalAdvance(' ') * self.tab_width)
         self.area = _LineArea(self)
         self.highlighter = VerilogHighlighter(self.document())
         self.blockCountChanged.connect(lambda _: self.setViewportMargins(self.line_area_width(), 0, 0, 0))
@@ -76,6 +80,13 @@ class CodeEditor(QPlainTextEdit):
             p.drawText(0, top, self.area.width() - 6, h, Qt.AlignRight, str(n))
             block = block.next()
             top += h
+
+    def keyPressEvent(self, e):
+        if e.key() == Qt.Key_Tab and not e.modifiers() and not self.textCursor().hasSelection():
+            col = self.textCursor().positionInBlock()          # spaces to the next tab stop
+            self.insertPlainText(' ' * (self.tab_width - col % self.tab_width))
+            return
+        super().keyPressEvent(e)
 
     def _highlight_line(self):
         sel = QTextEdit.ExtraSelection()

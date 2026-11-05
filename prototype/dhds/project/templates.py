@@ -23,21 +23,29 @@ def new_fsm(library: str, unit: str, view: str, ports: list[tuple[str, str, str]
         if mode == 'input' and not clock_done and _is_clock(name):
             s.category, s.expression, clock_done = 'clock', f'posedge {name}', True
         elif mode == 'input' and not reset_done and _is_reset(name):
-            low = name.lower().endswith('_n') or name.lower().endswith('n')
-            s.category, s.expression, reset_done = 'reset', f'!{name}' if low else name, True
+            # As in a new HDS 2021.1 state diagram, the reset is asynchronous and active low
+            # ("Reset (Async Low)", condition !rst), whatever its name
+            s.category, s.expression, reset_done = 'reset', f'!{name}', True
         elif mode == 'output':
             s.scheme, s.default = 'comb', "'0" if bounds else "1'b0"
         signals.append(s)
-    m = Machine(name=unit if unit.endswith('fsm') else f'{unit}_fsm', encoding=encoding, state_decl=state_decl)
+    # the concurrent state machine is named "csm", as HDS names it in a new state diagram
+    m = Machine(name='csm', encoding=encoding, state_decl=state_decl)
     m.states = [State('s1', 'ST_IDLE', 0, 0)]
     m.points = [Point('p1', 'clock', -220, -100), Point('p2', 'reset', -220, -50), Point('p3', 'recovery', -220, 80)]
     m.transitions = [Transition('t1', 'p2', 's1'), Transition('t2', 'p3', 's1')]
     return FsmView(library=library, unit=unit, view=view, language=language, signals=signals, machines=[m])
 
 
-def new_module(unit: str, ports: list[tuple[str, str, str]], language: str, header: str) -> str:
+def _lines(text: str) -> list[str]:
+    return text.rstrip('\n').split('\n') if text.strip() else []
+
+
+def new_module(unit: str, ports: list[tuple[str, str, str]], language: str, header: str,
+               pre: str = '', post: str = '', end: str = '') -> str:
+    """Text view of a new module; pre/post/end are the Default Directives of Verilog Options."""
     sv = language == 'systemverilog'
-    lines = header.rstrip('\n').split('\n') if header.strip() else []
+    lines = _lines(header) + _lines(pre)
     lines.append(f'module {unit} (')
     rows = []
     for mode, bounds, name in ports:
@@ -46,8 +54,10 @@ def new_module(unit: str, ports: list[tuple[str, str, str]], language: str, head
     lines.append(',\n'.join(rows))
     lines.append(');')
     lines.append('')
+    lines += _lines(post)
     lines.append('  // TODO: implementation')
     lines.append('')
     lines.append(f'endmodule // {unit}')
+    lines += _lines(end)
     lines.append('')
     return '\n'.join(lines)
